@@ -222,10 +222,11 @@ def ytdlp_subject() -> YtDlpSubject:
 # Marked from here rather than in the test file because that file is
 # byte-identical across the three projects and its canonical region is
 # hashed: an xfail written into it would be drift. Every entry cites
-# the issue that closes it, and
+# the issue that closes it.
 # docs/ytdlp-conformance/check-conformance-drift.sh fails when more
-# items are marked than xfail_budget allows, so the list can only
-# shrink.
+# items are marked than xfail_budget allows, and
+# test_conformance_registry.py holds the budget equal to the number of
+# entries, so the list cannot grow without the budget visibly moving.
 #
 # Two of the five are findings against the shared test rather than
 # against this repository, and say so. Recording them as gaps is the

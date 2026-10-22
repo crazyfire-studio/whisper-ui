@@ -3,9 +3,10 @@
 ``CONFORMANCE_XFAILS`` still names tests that exist: an entry that
 matches nothing is stale, because the test it excused was renamed or
 deleted, and leaving it behind reserves a slot in ``xfail_budget`` for
-a gap nobody can close. And every xfail reason and every profile waiver
-cites a numbered issue, which the copy's own check is too loose to
-enforce.
+a gap nobody can close. ``xfail_budget`` equals the number of entries,
+so closing a gap gives its slot back. And every xfail reason and every
+profile waiver cites a numbered issue, which the copy's own check is
+too loose to enforce.
 
 The names are resolved against the imported module rather than
 against the items pytest collected. A check that reads the collection
@@ -77,6 +78,19 @@ def test_every_registered_node_id_names_a_real_test() -> None:
         "these conformance xfail entries name no test in "
         f"{CONFORMANCE_PATH}: {unresolved}. Remove the entry and lower "
         "xfail_budget, or fix the name."
+    )
+
+
+def test_the_budget_is_exactly_the_registered_gaps() -> None:
+    # check-conformance-drift.sh only holds the marked items to at most
+    # xfail_budget. Closing a gap without lowering the budget would
+    # leave a free slot for a new one to take without the diff that is
+    # meant to show it. Required here rather than in the shared script;
+    # see fdff87554/youtube-downloader#143.
+    budget = _profile()["xfail_budget"]
+    assert budget == len(CONFORMANCE_XFAILS), (
+        f"xfail_budget is {budget} but {len(CONFORMANCE_XFAILS)} conformance gaps are registered; "
+        "lower the budget when a gap closes, and raise it only together with a new entry"
     )
 
 
