@@ -69,7 +69,9 @@ def pytest_collection_finish(session: pytest.Session) -> None:
     destination = os.environ.get(COUNT_FILE_ENV)
     if not destination:
         return
-    marked = [item for item in session.items if item.get_closest_marker("xfail") is not None]
+    marked = [
+        item for item in session.items if item.get_closest_marker("xfail") is not None
+    ]
     with Path(destination).open("w", encoding="utf-8") as handle:
         handle.write(f"{len(marked)}\n")
         for item in marked:

@@ -169,7 +169,12 @@ indent-style = "space"
 # in all three. Measured on the template: at 120, ruff format joins the call
 # arguments in `_extractors_matching` and collapses the implicit string
 # concatenation in `_load_profile`. `ruff check` still covers the file.
-exclude = ["tests/unit/test_ytdlp_conformance.py"]
+# The xfail plugin is copied verbatim beside the drift script for the same
+# reason: at 120 the formatter joins its list comprehension onto one line.
+exclude = [
+  "tests/unit/test_ytdlp_conformance.py",
+  "docs/ytdlp-conformance/conformance_xfail_plugin.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
