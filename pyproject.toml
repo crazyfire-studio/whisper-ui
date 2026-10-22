@@ -266,4 +266,4 @@ xfail_budget = 5
 C5 = "error-message content is not visible through the shared adapter; see fdff87554/youtube-downloader#140"
 "C7.external" = "no download is driven as a subprocess, so there is nothing for this aspect to describe; see fdff87554/youtube-downloader#135"
 "C7.landed" = "the landed file IS measured here (DownloadStage._guard_download_size), but not through the shared adapter; see fdff87554/youtube-downloader#140"
-"C8.deadline" = "no wall-clock bound on a download; see #TBD"
+"C8.deadline" = "no wall-clock bound on a download; see #189"
