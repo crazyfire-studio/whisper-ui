@@ -2,12 +2,14 @@ version: 2
 updates:
   - package-ecosystem: "uv"
     directory: "/"
-    # No versioning-strategy, so an update raises the lower bound in
-    # pyproject.toml to the version it locks, not only uv.lock. That is the
-    # policy, not an accident: every image installs from constraints exported
-    # from uv.lock (`uv export --frozen` in each Dockerfile), so the floor
-    # never decides what ships, and keeping it at the lock stops an install
-    # that ignores the lock from resolving below what CI tested.
+    # An update raises the lower bound in pyproject.toml to the version it
+    # locks, not only uv.lock. Set explicitly: the default, auto, picks
+    # increase or widen by whether Dependabot takes this for an app or a
+    # library. Every image installs from constraints exported from uv.lock
+    # (`uv export --frozen` in each Dockerfile), so the floor never decides
+    # what ships, and keeping it at the lock stops an install that ignores
+    # the lock from resolving below what CI tested.
+    versioning-strategy: "increase"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
