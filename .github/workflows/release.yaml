@@ -1,0 +1,31 @@
+name: Release
+# A pushed v* tag also publishes a GitHub Release whose notes are the
+# version's CHANGELOG section. From v2.8.0 to v2.21.0 releases were tags
+# only, so the Releases page called v2.7.0 "Latest" for fifteen versions
+# until they were backfilled by hand. The images are Docker Publish's job;
+# this one only writes the release.
+on:
+  push:
+    tags:
+      - "v*"
+# Deny-all default; the job re-grants only what it needs.
+permissions: {}
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Fails when the CHANGELOG has no section for this version, so a tag
+      # pushed without notes stops here instead of publishing an empty
+      # release. tests/unit/test_changelog_section.py checks the same thing
+      # for the version in pyproject.toml before the tag exists.
+      - name: Extract this version's CHANGELOG section
+        run: python3 .github/scripts/changelog_section.py "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --latest
