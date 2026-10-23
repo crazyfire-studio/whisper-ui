@@ -14,6 +14,12 @@ permissions:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    # Every job has a timeout. Without one, a stalled download waits out
+    # GitHub's 360-minute default: apt sat silent for 50 minutes on
+    # 2026-10-22 (#209). Each value leaves headroom over the slowest run
+    # among the last 100 that did not stall on a download (image builds: up
+    # to 17 minutes; every other job: under 6).
+    timeout-minutes: 15
     # Validate against both Python versions actually shipped in deployment:
     # 3.12 (GPU worker, pinned by pytorch/pytorch base image) and 3.13
     # (frontend / CPU worker / dev). pyproject declares requires-python
@@ -82,6 +88,7 @@ jobs:
         run: uv export --no-emit-project --extra dev --format requirements-txt --quiet | uv tool run pip-audit -r /dev/stdin --strict --ignore-vuln MAL-2026-4750
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Same dual-version coverage as lint-and-test. lupa (fakeredis [lua])
     # ships per-cpython-ABI wheels, so 3.12 vs 3.13 must both be exercised
     # against the actual EVAL-based progress reporter code path.
@@ -95,8 +102,51 @@ jobs:
         uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
+      # ffmpeg is not in the runner image, and fetching it through apt on
+      # every run is where the slow tail came from (#209): the Azure mirror
+      # stalled for up to 50 minutes. The package lists and .debs are cached
+      # per runner image release, so apt downloads once per release; on a
+      # hit it installs with --no-download and reaches no mirror. The
+      # release is in the key because what apt has to fetch depends on what
+      # the image already ships.
+      - name: Read the runner image release
+        id: runner-image
+        run: echo "release=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Cache ffmpeg's apt packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-ffmpeg
+          key: apt-ffmpeg-${{ steps.runner-image.outputs.release }}
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          cache="$HOME/apt-ffmpeg"
+          if [ -d "$cache/lists" ]; then
+            sudo rm -rf /var/lib/apt/lists
+            sudo mkdir -p /var/lib/apt/lists/partial
+            sudo cp -r "$cache/lists/." /var/lib/apt/lists/
+            sudo cp "$cache"/archives/*.deb /var/cache/apt/archives/
+          else
+            # A miss still goes to the mirror, so bound each try and retry
+            # it rather than wait on a stalled download.
+            for attempt in 1 2 3; do
+              if sudo timeout 120 apt-get -o Acquire::Retries=3 update &&
+                sudo timeout 240 apt-get -o Acquire::Retries=3 install -y --download-only ffmpeg; then
+                break
+              fi
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              echo "apt attempt $attempt failed or stalled; retrying" >&2
+            done
+            mkdir -p "$cache/archives"
+            sudo cp -r /var/lib/apt/lists "$cache/lists"
+            sudo rm -rf "$cache/lists/partial" "$cache/lists/lock"
+            cp /var/cache/apt/archives/*.deb "$cache/archives/"
+            sudo chown -R "$USER" "$cache"
+          fi
+          sudo apt-get install -y --no-download ffmpeg
+          # The integration test skips when ffmpeg is missing, so a broken
+          # install has to fail here instead of turning into a quiet skip.
+          ffmpeg -hide_banner -version > /dev/null
+          ffprobe -hide_banner -version > /dev/null
       - name: Install dependencies
         run: uv sync --extra dev --frozen --python ${{ matrix.python-version }}
       - name: Integration tests
@@ -106,6 +156,7 @@ jobs:
   # between pyproject.toml and the GPU base image slip into main.
   docker-build-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +182,7 @@ jobs:
   # Publish on release tags.
   rocm-dockerfile-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -141,6 +193,7 @@ jobs:
   # here, since style.css is gitignored) and a headless Chromium.
   visual-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install mise
@@ -153,7 +206,21 @@ jobs:
         run: npm ci
       - name: Build CSS
         run: mise run css
+      # No --with-deps: it runs apt for fonts and libraries, and was the
+      # other half of the slow tail (fonts at 26 kB/s for 11 minutes, #209).
+      # These tests read computed colours, not screenshots, so fonts do not
+      # matter, and the runner image ships Google Chrome, whose shared
+      # libraries Chromium also loads. The browser itself is cached per
+      # Playwright version.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(uv run python -c 'import importlib.metadata; print(importlib.metadata.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Playwright Chromium
-        run: uv run playwright install --with-deps chromium
+        run: uv run playwright install chromium
       - name: Visual tests
         run: uv run pytest -m visual --tb=short -q
