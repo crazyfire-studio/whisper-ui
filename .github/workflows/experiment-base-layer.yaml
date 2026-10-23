@@ -1,0 +1,37 @@
+name: Experiment - base layer sources
+# Measurement only, for #209 (R3); not meant to be merged. Downloads the
+# 4.27 GB main layer of pytorch/pytorch:2.10.0-cuda12.8-cudnn9-runtime,
+# the layer that dominates the worker image build, from each registry that
+# serves it, to /dev/null, and prints the transfer time. The GHA-cache
+# figure comes from this pull request's own docker-build-check log.
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  blob-download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [dockerhub, ghcr]
+        attempt: [1, 2]
+    env:
+      DIGEST: sha256:58aaab9bde9ba91b4d93280a2f6e821759845563619815310391bade14e461e7
+    steps:
+      - name: Download the layer
+        run: |
+          case "${{ matrix.source }}" in
+            dockerhub)
+              token=$(curl -fsS "https://auth.docker.io/token?service=registry.docker.io&scope=repository:pytorch/pytorch:pull" | jq -r .token)
+              url="https://registry-1.docker.io/v2/pytorch/pytorch/blobs/$DIGEST"
+              ;;
+            ghcr)
+              token=$(curl -fsS "https://ghcr.io/token?scope=repository:crazyfire-studio/whisper-ui-worker:pull" | jq -r .token)
+              url="https://ghcr.io/v2/crazyfire-studio/whisper-ui-worker/blobs/$DIGEST"
+              ;;
+          esac
+          curl -fsSL -o /dev/null -H "Authorization: Bearer $token" \
+            -w "RESULT source=${{ matrix.source }} attempt=${{ matrix.attempt }} bytes=%{size_download} seconds=%{time_total} bytes_per_second=%{speed_download}\n" \
+            "$url"
