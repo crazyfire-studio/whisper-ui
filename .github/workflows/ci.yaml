@@ -102,8 +102,51 @@ jobs:
         uses: jdx/mise-action@fc42bcc7ddbf51124c30f95a877a0c5168a3bfde # v5.2.1
       - name: Install Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
+      # ffmpeg is not in the runner image, and fetching it through apt on
+      # every run is where the slow tail came from (#209): the Azure mirror
+      # stalled for up to 50 minutes. The package lists and .debs are cached
+      # per runner image release, so apt downloads once per release; on a
+      # hit it installs with --no-download and reaches no mirror. The
+      # release is in the key because what apt has to fetch depends on what
+      # the image already ships.
+      - name: Read the runner image release
+        id: runner-image
+        run: echo "release=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Cache ffmpeg's apt packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/apt-ffmpeg
+          key: apt-ffmpeg-${{ steps.runner-image.outputs.release }}
       - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          cache="$HOME/apt-ffmpeg"
+          if [ -d "$cache/lists" ]; then
+            sudo rm -rf /var/lib/apt/lists
+            sudo mkdir -p /var/lib/apt/lists/partial
+            sudo cp -r "$cache/lists/." /var/lib/apt/lists/
+            sudo cp "$cache"/archives/*.deb /var/cache/apt/archives/
+          else
+            # A miss still goes to the mirror, so bound each try and retry
+            # it rather than wait on a stalled download.
+            for attempt in 1 2 3; do
+              if sudo timeout 120 apt-get -o Acquire::Retries=3 update &&
+                sudo timeout 240 apt-get -o Acquire::Retries=3 install -y --download-only ffmpeg; then
+                break
+              fi
+              if [ "$attempt" = 3 ]; then exit 1; fi
+              echo "apt attempt $attempt failed or stalled; retrying" >&2
+            done
+            mkdir -p "$cache/archives"
+            sudo cp -r /var/lib/apt/lists "$cache/lists"
+            sudo rm -rf "$cache/lists/partial" "$cache/lists/lock"
+            cp /var/cache/apt/archives/*.deb "$cache/archives/"
+            sudo chown -R "$USER" "$cache"
+          fi
+          sudo apt-get install -y --no-download ffmpeg
+          # The integration test skips when ffmpeg is missing, so a broken
+          # install has to fail here instead of turning into a quiet skip.
+          ffmpeg -hide_banner -version > /dev/null
+          ffprobe -hide_banner -version > /dev/null
       - name: Install dependencies
         run: uv sync --extra dev --frozen --python ${{ matrix.python-version }}
       - name: Integration tests
