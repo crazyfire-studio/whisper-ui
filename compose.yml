@@ -76,7 +76,7 @@ x-gpu-lifecycle-env: &gpu-lifecycle-env
   WORKER_MAX_IDLE_TIME: ${WORKER_MAX_IDLE_TIME:-300}
 services:
   frontend:
-    image: ghcr.io/fdff87554/whisper-ui-frontend:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-frontend:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
@@ -194,7 +194,7 @@ services:
     restart: "no"
   worker-gpu:
     profiles: [gpu]
-    image: ghcr.io/fdff87554/whisper-ui-worker:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-worker:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
@@ -231,7 +231,7 @@ services:
     logging: *default-logging
   worker-cpu:
     profiles: [cpu]
-    image: ghcr.io/fdff87554/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.worker.cpu
@@ -265,7 +265,7 @@ services:
   # `getent group video render` on your host (defaults suit a Strix Halo box).
   worker-rocm:
     profiles: [rocm]
-    image: ghcr.io/fdff87554/whisper-ui-worker-rocm:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-worker-rocm:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.worker.rocm
@@ -317,7 +317,7 @@ services:
   # with its queue narrowed to whisper:io.
   worker-io:
     profiles: [io]
-    image: ghcr.io/fdff87554/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.worker.cpu
@@ -343,7 +343,7 @@ services:
   # WORKER_IO_QUEUES="whisper:io whisper:cpu default").
   worker-llm:
     profiles: [llm-worker]
-    image: ghcr.io/fdff87554/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
+    image: ghcr.io/crazyfire-studio/whisper-ui-worker-cpu:${WHISPER_UI_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.worker.cpu
