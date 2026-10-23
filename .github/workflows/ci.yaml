@@ -206,7 +206,21 @@ jobs:
         run: npm ci
       - name: Build CSS
         run: mise run css
+      # No --with-deps: it runs apt for fonts and libraries, and was the
+      # other half of the slow tail (fonts at 26 kB/s for 11 minutes, #209).
+      # These tests read computed colours, not screenshots, so fonts do not
+      # matter, and the runner image ships Google Chrome, whose shared
+      # libraries Chromium also loads. The browser itself is cached per
+      # Playwright version.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(uv run python -c 'import importlib.metadata; print(importlib.metadata.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright's Chromium
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install Playwright Chromium
-        run: uv run playwright install --with-deps chromium
+        run: uv run playwright install chromium
       - name: Visual tests
         run: uv run pytest -m visual --tb=short -q
