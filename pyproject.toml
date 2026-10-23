@@ -87,7 +87,7 @@ dev = [
   # Renders the compiled stylesheet in a headless Chromium and reads computed
   # colors to guard theme contrast (issue #61). Browser binary is installed
   # separately via `playwright install chromium` (not a Python dependency).
-  "pytest-playwright>=0.9.0,<1",
+  "pytest-playwright>=0.10.0,<1",
 ]
 
 [build-system]
