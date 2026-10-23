@@ -7,6 +7,82 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.22.0] - 2026-10-23
+
+Security patches, bounded yt-dlp downloads, and images published under
+`crazyfire-studio`.
+
+### Deploy notes
+
+- **Images moved to `ghcr.io/crazyfire-studio/whisper-ui-*`** (#212). The
+  repository moved from `fdff87554` to `crazyfire-studio`, and Docker Publish
+  names images after the repository owner, so nothing new reached
+  `ghcr.io/fdff87554/...` after the move (#211). `compose.yml` and the README
+  now name the new images. Releases up to 2.21.0 exist only under the old
+  names, so pinning or rolling back to one of them means using
+  `ghcr.io/fdff87554/...`. A `compose.override.yml` that sets `image:` needs
+  the same change.
+- **Rebuild or re-pull every image** to pick up the security fixes below.
+
+### Security
+
+- certifi 2026.4.22 → 2026.10.19: the bundle trusted emSign roots whose
+  intermediate CA keys were compromised (GHSA-6q48-6c7w-9gw2) (#203).
+- opentelemetry-api 1.41.1 → 1.45.1, with opentelemetry-sdk and
+  opentelemetry-semantic-conventions: unbounded `tracestate` parsing
+  (GHSA-xcq7-p3pf-p88h) (#208).
+- nltk 3.9.4 → 3.10.4 in the worker images. 3.9.4 is listed under 52
+  advisories, 6 of them critical; 3.10.3 is still inside GHSA-8mgp-746c-j5xp
+  (#206).
+- yt-dlp 2026.6.9 → 2026.8.19 (CVE-2026-55404 / GHSA-6v4j-43gg-vj32) (#180);
+  anyio 4.13.0 → 4.14.2 and urllib3 2.7.0 → 2.8.0 (#177).
+
+### Added
+
+- `YOUTUBE_MAX_DOWNLOAD_SIZE` (default 8 GiB, `0` disables) bounds the bytes
+  one yt-dlp download may write. A declared size over the limit is rejected
+  before anything is downloaded, a progress hook aborts a source that declares
+  nothing or under-reports, and an oversized source fails at once instead of
+  being retried (#170).
+
+### Changed
+
+- YouTube downloads are capped at 1080p and prefer H.264 over AV1. On the clip
+  measured in #169 the download is 80.5 MiB, where the old selection was 2.9x
+  that.
+- yt-dlp's own messages go through the application logger instead of raw
+  stderr (#171).
+- Dependencies bumped: transformers 5.12.0 → 5.20.2, numpy 2.4.6 → 2.5.3,
+  rq 2.9.1 → 2.12.0, pydantic-settings 2.14.2 → 2.16.0, pandas 3.0.3 → 3.0.6,
+  gdown 6.1.0 → 6.4.2, fastapi floor `>=0.142.2`. The transformers and nltk
+  updates were checked with a transcription and alignment canary against the
+  previous worker image: identical text and word timings (#200, #206).
+
+### Fixed
+
+- Any failed download now sweeps its partial `video.*` files out of the
+  download directory instead of leaving them for the next attempt (#170).
+- A throttled playlist source (`HTTP Error 503: Service Unavailable`,
+  "temporarily unavailable") is no longer reported as an inaccessible playlist;
+  it gets the "source is briefly unresponsive" message instead (#172).
+- `METRICS_TOKEN` now reaches the frontend container that serves `/metrics`;
+  it was documented and enforced but never wired through Compose (#185).
+- A failure to persist a job's result no longer puts the raw exception text
+  into the job's user-visible error, and an exception message can no longer
+  forge an extra operator log line from speaker assignment (#184).
+
+### Development
+
+- CI runs on stacked pull requests (#176), runs lint without pip in the uv
+  venv (#181), lints against a shell reaching subprocess calls (#175), and
+  installs yt-dlp's challenge solvers so tests can see them (#173).
+- The shared yt-dlp conformance test and its drift check run in CI (#190).
+- Every CI job has a timeout, and ffmpeg and Playwright's Chromium install from
+  caches instead of apt on each run (#210).
+- Dependabot raises version floors with the lock explicitly
+  (`versioning-strategy: increase`) (#205); the quickstart install honours the
+  lockfile (#182).
+
 ## [2.21.0] - 2026-07-20
 
 Deployment-wiring and GPU-worker reliability follow-ups to 2.20.0.
@@ -1035,7 +1111,8 @@ Error` JSON body while logging the full traceback, so an
   classification, missing-job handling) are now covered by unit tests
   in `test_pipeline_dispatcher.py` and `test_stage_tasks.py`.
 
-[Unreleased]: https://github.com/fdff87554/whisper-ui/compare/v2.21.0...HEAD
+[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v2.22.0...HEAD
+[2.22.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v2.22.0
 [2.21.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.21.0
 [2.18.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.18.0
 [2.17.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.17.0
