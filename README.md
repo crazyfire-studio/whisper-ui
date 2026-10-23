@@ -128,12 +128,16 @@ Open <http://localhost:8080> in your browser.
 Pre-built Docker images are published to GHCR on each release.
 `docker compose up` pulls them automatically; if unavailable, it falls back to a local build.
 
-| Image                                      | Description           |
-| ------------------------------------------ | --------------------- |
-| `ghcr.io/fdff87554/whisper-ui-frontend`    | FastAPI web interface |
-| `ghcr.io/fdff87554/whisper-ui-worker`      | GPU worker (CUDA)     |
-| `ghcr.io/fdff87554/whisper-ui-worker-cpu`  | CPU worker            |
-| `ghcr.io/fdff87554/whisper-ui-worker-rocm` | AMD GPU worker (ROCm) |
+| Image                                             | Description           |
+| ------------------------------------------------- | --------------------- |
+| `ghcr.io/crazyfire-studio/whisper-ui-frontend`    | FastAPI web interface |
+| `ghcr.io/crazyfire-studio/whisper-ui-worker`      | GPU worker (CUDA)     |
+| `ghcr.io/crazyfire-studio/whisper-ui-worker-cpu`  | CPU worker            |
+| `ghcr.io/crazyfire-studio/whisper-ui-worker-rocm` | AMD GPU worker (ROCm) |
+
+Releases up to 2.21.0 were published as `ghcr.io/fdff87554/whisper-ui-*`,
+before the repository moved to `crazyfire-studio`. Those tags are not in the
+new namespace, so pinning one of them means using the old image names.
 
 > The ROCm worker image (~38 GB) is published only on **release tags**, not on
 > every `main` push. Until a release exists, `docker compose --profile rocm up`
