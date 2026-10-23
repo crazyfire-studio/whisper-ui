@@ -14,6 +14,12 @@ permissions:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    # Every job has a timeout. Without one, a stalled download waits out
+    # GitHub's 360-minute default: apt sat silent for 50 minutes on
+    # 2026-10-22 (#209). Each value leaves headroom over the slowest run
+    # among the last 100 that did not stall on a download (image builds: up
+    # to 17 minutes; every other job: under 6).
+    timeout-minutes: 15
     # Validate against both Python versions actually shipped in deployment:
     # 3.12 (GPU worker, pinned by pytorch/pytorch base image) and 3.13
     # (frontend / CPU worker / dev). pyproject declares requires-python
@@ -82,6 +88,7 @@ jobs:
         run: uv export --no-emit-project --extra dev --format requirements-txt --quiet | uv tool run pip-audit -r /dev/stdin --strict --ignore-vuln MAL-2026-4750
   integration-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # Same dual-version coverage as lint-and-test. lupa (fakeredis [lua])
     # ships per-cpython-ABI wheels, so 3.12 vs 3.13 must both be exercised
     # against the actual EVAL-based progress reporter code path.
@@ -106,6 +113,7 @@ jobs:
   # between pyproject.toml and the GPU base image slip into main.
   docker-build-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -131,6 +139,7 @@ jobs:
   # Publish on release tags.
   rocm-dockerfile-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -141,6 +150,7 @@ jobs:
   # here, since style.css is gitignored) and a headless Chromium.
   visual-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install mise
