@@ -33,7 +33,7 @@ frontend = [
 ytdlp = [
   # Floor comes from the CVE-2026-55404 patch; this extra only collapses the
   # two previous declarations into one, it does not move the version.
-  "yt-dlp>=2026.8.19",
+  "yt-dlp>=2026.10.21",
   # The JavaScript challenge solvers. yt-dlp pins the exact version it needs
   # in its own [default]/[pin] extras; we depend on the package directly
   # because those extras drag in eight more packages this project does not
@@ -245,11 +245,12 @@ js_runtime_provided_by = "image"
 # installed yt-dlp by test_ejs_matches_the_installed_yt_dlp.
 ejs_coupling = "pinned"
 
-# YT_DLP_MARKERS_VERIFIED_AGAINST is "2026.08.19", but this key is compared
-# against importlib.metadata.version("yt-dlp"), which normalises the zero --
-# measured as "2026.8.19". The two spellings are the same release; copying the
-# constant here verbatim fails the check.
-markers_verified_against = "2026.8.19"
+# YT_DLP_MARKERS_VERIFIED_AGAINST uses yt-dlp's own spelling
+# (yt_dlp.version.__version__, zero-padded), but this key is compared against
+# importlib.metadata.version("yt-dlp"), which drops leading zeros: 2026.08.19 is
+# measured as "2026.8.19". For 2026.10.21 the two spellings match; for a month or
+# day below 10, drop the zero here or the check fails.
+markers_verified_against = "2026.10.21"
 
 # No PO Token provider is configured and no code reads one.
 po_token_hook = "absent"
