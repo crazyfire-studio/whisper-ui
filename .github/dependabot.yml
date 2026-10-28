@@ -21,6 +21,37 @@ updates:
           - "pytest*"
           - "fakeredis*"
           - "ruff*"
+      # Minor and patch updates of the worker runtime, in one PR. CI never runs
+      # this code: `dev` does not include the `worker` extra, so CI only shows
+      # that the lock resolves and the worker images build. Merge it after a
+      # worker smoke test. Majors still arrive one PR each.
+      worker-runtime:
+        patterns:
+          - "faster-whisper"
+          - "ctranslate2"
+          - "transformers"
+          - "nltk"
+          - "numpy"
+          - "omegaconf"
+          - "pandas"
+          - "pyannote*"
+          - "opencc-python-reimplemented"
+          - "gdown"
+        update-types:
+          - "minor"
+          - "patch"
+      # Every other minor and patch update, all exercised by CI. A dependency
+      # joins the first group it matches, so the groups above keep theirs.
+      # yt-dlp stays on its own: its floor tracks CVE patches, and a failure
+      # elsewhere in a grouped PR should not hold it back.
+      app:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "yt-dlp*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       # fakeredis 2.36.0 refactored CLIENT INFO so in-process connections stop
       # exposing 'addr'; RQ's _set_ip_address reads client['addr'] without
@@ -36,6 +67,14 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+    # Minor and patch bumps of every action in one PR; majors one PR each.
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: "docker"
     directory: "/docker"
     schedule:
