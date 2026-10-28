@@ -16,6 +16,7 @@ updates:
     commit-message:
       prefix: "chore"
     groups:
+      # No update-types, so this group takes majors of these dev tools too.
       python-dev:
         patterns:
           - "pytest*"
