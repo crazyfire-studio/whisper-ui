@@ -47,8 +47,8 @@ worker = [
   # torch~=2.8.0 constraint conflicting with the base image's torch 2.10.0.
   # The dependencies below cover whisperx's runtime needs (minus torch/torchaudio).
   "faster-whisper>=1.1.1,<2",
-  "ctranslate2>=4.8.3",
-  "transformers>=5.20.2,<6",
+  "ctranslate2>=4.8.4",
+  "transformers>=5.21.0,<6",
   "nltk>=3.10.4",
   "numpy>=2.5.4",
   "omegaconf>=2.4.0",
