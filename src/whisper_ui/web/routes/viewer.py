@@ -10,8 +10,10 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from whisper_ui.core.constants import VIEWER_SEARCH_SEGMENT_LIMIT
 from whisper_ui.core.models import JobStatus
 from whisper_ui.export.factory import get_exporter
+from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.auth import owner_filter
 from whisper_ui.web.deps import CurrentUserDep, DbDep, FileStoreDep, make_content_disposition, templates
+from whisper_ui.web.flash import set_flash
 from whisper_ui.web.validation import validate_hex_id
 
 _MEDIA_MIME_TYPES: dict[str, str] = {
@@ -159,7 +161,7 @@ async def media_download(job_id: str, db: DbDep, filestore: FileStoreDep, user: 
 
 
 @router.post("/viewer/{job_id}/share")
-async def share_create(job_id: str, db: DbDep, user: CurrentUserDep):
+async def share_create(request: Request, job_id: str, db: DbDep, user: CurrentUserDep):
     validate_hex_id(job_id, "job_id")
     job = db.get_job(job_id, owner_id=owner_filter(user))
     if job is None or job.status != JobStatus.COMPLETED:
@@ -169,10 +171,11 @@ async def share_create(job_id: str, db: DbDep, user: CurrentUserDep):
         job.share_token = secrets.token_urlsafe(16)
         db.update_job(job)
 
-    return Response(
-        status_code=200,
-        headers={"HX-Trigger": '{"showToast": {"message": "已產生分享連結", "type": "success"}}', "HX-Refresh": "true"},
-    )
+    # HX-Refresh reloads the page, so the toast travels as a session flash:
+    # an HX-Trigger event would be lost, and its non-latin-1 text cannot be
+    # encoded into a response header anyway.
+    set_flash(request, ui_labels.VIEWER_SHARE_LINK_CREATED, "success")
+    return Response(status_code=200, headers={"HX-Refresh": "true"})
 
 
 @router.delete("/viewer/{job_id}/share")

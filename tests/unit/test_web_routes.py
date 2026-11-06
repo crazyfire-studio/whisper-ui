@@ -1277,6 +1277,107 @@ class TestViewerRoutes:
         assert "%E6%B8%AC%E8%A9%A6%E9%9F%B3%E6%AA%94" in cd
 
 
+def _create_shared_job(db, filestore) -> Job:
+    """A COMPLETED upload job with audio, one segment, and a share token."""
+    job = _completed_upload_job_with_audio(db, filestore)
+    filestore.save_result(
+        job.id,
+        TranscriptResult(segments=[Segment(start=0.0, end=1.0, text="shared words")], language="zh", duration=1.0),
+    )
+    job.share_token = "test-share-token-not-real"
+    db.update_job(job)
+    return job
+
+
+class TestShareRoutes:
+    def test_share_create_persists_token_and_refreshes(self, client, db, filestore):
+        job = _create_completed_job(db, filestore)
+
+        resp = client.post(f"/viewer/{job.id}/share", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert resp.headers["HX-Refresh"] == "true"
+        assert db.get_job(job.id).share_token
+
+    def test_share_create_flashes_confirmation_on_reload(self, client, db, filestore):
+        job = _create_completed_job(db, filestore)
+
+        client.post(f"/viewer/{job.id}/share", headers={"HX-Request": "true"})
+        page = client.get(f"/viewer/{job.id}")
+
+        assert ui_labels.VIEWER_SHARE_LINK_CREATED in flash_messages(page.text)
+
+    def test_share_create_keeps_existing_token(self, client, db, filestore):
+        job = _create_shared_job(db, filestore)
+
+        client.post(f"/viewer/{job.id}/share")
+
+        assert db.get_job(job.id).share_token == "test-share-token-not-real"
+
+    def test_share_create_rejects_unfinished_job(self, client, db):
+        job = _create_failed_job(db)
+
+        resp = client.post(f"/viewer/{job.id}/share")
+
+        assert resp.status_code == 404
+        assert db.get_job(job.id).share_token is None
+
+    def test_share_revoke_clears_token(self, client, db, filestore):
+        job = _create_shared_job(db, filestore)
+
+        resp = client.delete(f"/viewer/{job.id}/share")
+
+        assert resp.status_code == 200
+        assert db.get_job(job.id).share_token is None
+
+    def test_shared_viewer_renders_without_login(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}")
+
+        assert resp.status_code == 200
+        assert "shared words" in resp.text
+
+    def test_shared_viewer_unknown_token_returns_404(self, app):
+        from fastapi.testclient import TestClient
+
+        resp = TestClient(app).get("/shared/unknown-token")
+
+        assert resp.status_code == 404
+
+    def test_shared_viewer_revoked_token_returns_404(self, client, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        client.delete(f"/viewer/{job.id}/share")
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}")
+
+        assert resp.status_code == 404
+
+    def test_shared_media_serves_source_without_login(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}/media")
+
+        assert resp.status_code == 200
+        assert resp.content == b"original audio bytes"
+
+    def test_shared_media_missing_source_returns_404(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        filestore.delete_upload_files(job.id)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}/media")
+
+        assert resp.status_code == 404
+
+
 class TestUploadPost:
     def _upload(self, client, files=None, **form_data):
         data = {
