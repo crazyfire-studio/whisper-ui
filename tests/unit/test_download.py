@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from whisper_ui.core import messages
 from whisper_ui.core.constants import GDRIVE_SOCKET_TIMEOUT, YT_DLP_MAX_HEIGHT
 from whisper_ui.core.exceptions import DownloadError
 from whisper_ui.core.ytdlp_logging import YtDlpLogger
@@ -1012,3 +1013,98 @@ class TestTwitterDownload:
             pytest.raises(DownloadError, match="exceeds the maximum"),
         ):
             DownloadStage(max_duration=3600).execute(context)
+
+
+class TestDownloadUserMessages:
+    """Failures with a known, display-safe reason carry it as user_message;
+    raw yt-dlp or gdown text never does."""
+
+    @pytest.fixture
+    def download_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "downloads"
+        d.mkdir()
+        return d
+
+    @staticmethod
+    def _ytdlp(info: dict[str, Any] | None = None, error: Exception | None = None) -> MagicMock:
+        ydl = MagicMock()
+        if error is not None:
+            ydl.extract_info.side_effect = error
+        else:
+            ydl.extract_info.return_value = info
+        ydl.__enter__ = lambda self: self
+        ydl.__exit__ = MagicMock(return_value=False)
+        module = MagicMock()
+        module.YoutubeDL.return_value = ydl
+        return module
+
+    def _fail(self, download_dir: Path, url: str, modules: dict[str, Any], **stage_kwargs: Any) -> DownloadError:
+        context = {"source_url": url, "download_dir": str(download_dir), "input_path": ""}
+        with (
+            patch.dict("sys.modules", modules),
+            patch("whisper_ui.pipeline.download.time.sleep"),
+            pytest.raises(DownloadError) as exc_info,
+        ):
+            DownloadStage(**stage_kwargs).execute(context)
+        return exc_info.value
+
+    _YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    _X = "https://x.com/someone/status/1234567890"
+    _DRIVE = "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz"
+
+    def test_live_stream(self, download_dir):
+        module = self._ytdlp({"duration": None, "is_live": True})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_LIVE_STREAM
+
+    def test_too_long(self, download_dir):
+        module = self._ytdlp({"duration": 9000})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module}, max_duration=5400)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LONG.format(hours=1.5)
+        assert "1.5 小時" in exc.user_message
+
+    def test_too_large(self, download_dir):
+        module = self._ytdlp({"duration": 60, "filesize": 3 * 1024**3})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module}, max_download_size=2 * 1024**3)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LARGE.format(limit="2.0 GB")
+
+    def test_x_post_restricted(self, download_dir):
+        module = self._ytdlp(error=Exception("Sorry, you are not authorized to view this tweet. Log in."))
+        exc = self._fail(download_dir, self._X, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_TWITTER_RESTRICTED
+
+    def test_transient_after_retries(self, download_dir):
+        module = self._ytdlp(error=Exception("HTTP Error 429: Too Many Requests"))
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_SOURCE_TRANSIENT
+
+    def test_unclassified_ytdlp_failure_has_no_user_message(self, download_dir):
+        module = self._ytdlp(error=Exception("ERROR: something odd at /internal/path"))
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message is None
+
+    def test_drive_file_not_shared(self, download_dir):
+        gdown = MagicMock()
+        gdown.download.side_effect = Exception("Cannot retrieve the public link of the file.")
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown})
+        assert exc.user_message == messages.DOWNLOAD_GDRIVE_UNAVAILABLE
+
+    def test_drive_unsupported_format(self, download_dir):
+        def download(url, output, **kwargs):
+            out = Path(output) / "notes.txt"
+            out.write_bytes(b"text")
+            return str(out)
+
+        gdown = MagicMock()
+        gdown.download = download
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown})
+        assert exc.user_message == messages.DOWNLOAD_UNSUPPORTED_FORMAT
+
+    def test_drive_too_large(self, download_dir):
+        def download(url, output, **kwargs):
+            kwargs["progress"](10, 5000)
+
+        gdown = MagicMock()
+        gdown.download = download
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown}, max_file_size=2048)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LARGE.format(limit="2.0 KB")

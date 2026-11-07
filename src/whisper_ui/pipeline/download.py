@@ -20,9 +20,14 @@ from whisper_ui.core.messages import (
     DOWNLOAD_DONE,
     DOWNLOAD_EXTRACTING_INFO,
     DOWNLOAD_GDRIVE_IN_PROGRESS,
+    DOWNLOAD_GDRIVE_UNAVAILABLE,
     DOWNLOAD_IN_PROGRESS,
+    DOWNLOAD_LIVE_STREAM,
     DOWNLOAD_SOURCE_TRANSIENT,
+    DOWNLOAD_TOO_LARGE,
+    DOWNLOAD_TOO_LONG,
     DOWNLOAD_TWITTER_RESTRICTED,
+    DOWNLOAD_UNSUPPORTED_FORMAT,
 )
 from whisper_ui.core.url_validation import (
     extract_gdrive_file_id,
@@ -166,7 +171,11 @@ class DownloadStage:
             # Content-Length (None when absent). Raising stops the transfer, so
             # an oversized file costs at most one chunk past the cap on disk.
             if self._max_file_size and max(received, total or 0) > self._max_file_size:
-                raise DownloadError(f"File is larger than the maximum allowed ({_as_size(self._max_file_size)}).")
+                limit = _as_size(self._max_file_size)
+                raise DownloadError(
+                    f"File is larger than the maximum allowed ({limit}).",
+                    user_message=DOWNLOAD_TOO_LARGE.format(limit=limit),
+                )
 
         result = None
         try:
@@ -183,14 +192,17 @@ class DownloadStage:
             )
             if result is None:
                 raise DownloadError(
-                    "Failed to download from Google Drive. Make sure the file is shared as 'Anyone with the link'."
+                    "Failed to download from Google Drive. Make sure the file is shared as 'Anyone with the link'.",
+                    user_message=DOWNLOAD_GDRIVE_UNAVAILABLE,
                 )
         except DownloadError:
             raise
         except BaseTimeoutException:
             raise
         except Exception as e:
-            raise DownloadError(f"Failed to download from Google Drive: {neutralise(str(e))}") from e
+            raise DownloadError(
+                f"Failed to download from Google Drive: {neutralise(str(e))}", user_message=DOWNLOAD_GDRIVE_UNAVAILABLE
+            ) from e
         finally:
             if result is None:
                 # gdown writes to <name>.part and keeps it on failure for its
@@ -207,13 +219,19 @@ class DownloadStage:
             size_mb = downloaded.stat().st_size / (1024 * 1024)
             limit_mb = self._max_file_size / (1024 * 1024)
             downloaded.unlink(missing_ok=True)
-            raise DownloadError(f"Downloaded file ({size_mb:.1f} MB) exceeds the maximum allowed ({limit_mb:.1f} MB).")
+            raise DownloadError(
+                f"Downloaded file ({size_mb:.1f} MB) exceeds the maximum allowed ({limit_mb:.1f} MB).",
+                user_message=DOWNLOAD_TOO_LARGE.format(limit=_as_size(self._max_file_size)),
+            )
 
         from whisper_ui.pipeline.preprocess import SUPPORTED_EXTENSIONS
 
         if downloaded.suffix.lower() not in SUPPORTED_EXTENSIONS:
             downloaded.unlink(missing_ok=True)
-            raise DownloadError(f"Downloaded file '{downloaded.name}' is not a supported audio or video format.")
+            raise DownloadError(
+                f"Downloaded file '{downloaded.name}' is not a supported audio or video format.",
+                user_message=DOWNLOAD_UNSUPPORTED_FORMAT,
+            )
 
         if on_progress:
             on_progress(1.0, DOWNLOAD_DONE)
@@ -392,7 +410,11 @@ class DownloadStage:
         concurrency for a path this project does not take on purpose.
         """
         if self._max_download_size and total_bytes > self._max_download_size:
-            raise DownloadError(f"Media is larger than the maximum allowed ({_as_size(self._max_download_size)}).")
+            limit = _as_size(self._max_download_size)
+            raise DownloadError(
+                f"Media is larger than the maximum allowed ({limit}).",
+                user_message=DOWNLOAD_TOO_LARGE.format(limit=limit),
+            )
 
     @staticmethod
     def _declared_size(info: dict[str, Any]) -> int:
@@ -430,11 +452,11 @@ class DownloadStage:
             except Exception as e:
                 msg = str(e).lower()
                 if "twitter" in allowed_extractors and any(m in msg for m in _TWITTER_RESTRICTED_MARKERS):
-                    raise DownloadError(DOWNLOAD_TWITTER_RESTRICTED) from e
+                    raise DownloadError(DOWNLOAD_TWITTER_RESTRICTED, user_message=DOWNLOAD_TWITTER_RESTRICTED) from e
                 if not any(m in msg for m in YT_DLP_TRANSIENT_MARKERS):
                     raise DownloadError(f"Failed to download video: {neutralise(str(e))}") from e
                 if attempt >= _MAX_DOWNLOAD_ATTEMPTS:
-                    raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT) from e
+                    raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT, user_message=DOWNLOAD_SOURCE_TRANSIENT) from e
                 logger.warning(
                     "Download attempt %d/%d failed transiently (%s); retrying",
                     attempt,
@@ -443,7 +465,7 @@ class DownloadStage:
                 )
                 time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
         # Defensive: every loop iteration returns or raises above.
-        raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT)
+        raise DownloadError(DOWNLOAD_SOURCE_TRANSIENT, user_message=DOWNLOAD_SOURCE_TRANSIENT)
 
     def _extract_once(self, yt_dlp_mod: Any, source_url: str, ydl_opts: dict[str, Any]) -> dict[str, Any]:
         """Run one yt-dlp pass: probe metadata, enforce the duration cap, then download."""
@@ -458,14 +480,18 @@ class DownloadStage:
             # but check both so a sparse extractor result still trips this.
             live_status = info.get("live_status")
             if info.get("is_live") or live_status in ("is_live", "is_upcoming"):
-                raise DownloadError("Live or upcoming streams are not supported. Retry after the stream has ended.")
+                raise DownloadError(
+                    "Live or upcoming streams are not supported. Retry after the stream has ended.",
+                    user_message=DOWNLOAD_LIVE_STREAM,
+                )
 
             duration = info.get("duration") or 0
             if duration > self._max_duration:
                 # :g keeps whole hours bare (4h) and fractional ones exact
                 # (1.5h) so a custom non-hour-aligned cap is not understated.
                 raise DownloadError(
-                    f"Video duration ({duration}s) exceeds the maximum allowed ({self._max_duration / 3600:g}h)."
+                    f"Video duration ({duration}s) exceeds the maximum allowed ({self._max_duration / 3600:g}h).",
+                    user_message=DOWNLOAD_TOO_LONG.format(hours=self._max_duration / 3600),
                 )
 
             # Cheapest place to stop an oversized source: the probe already
