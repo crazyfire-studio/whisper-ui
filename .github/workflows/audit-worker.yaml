@@ -1,0 +1,43 @@
+name: Audit worker dependencies
+# ci.yaml audits the dev extra on every pull request. The worker images install
+# a different set (worker + worker-llm: torch, pyannote, whisperx's runtime
+# deps), and nothing else watches it: Dependabot alerts are off for this repo,
+# and Dependabot version updates only raise direct dependencies, so transitive
+# packages such as pillow or aiohttp stay wherever the lock last put them.
+#
+# A separate workflow so that a new upstream advisory does not turn unrelated
+# pull requests red: it gates only pull requests that change the lock or the
+# dependency declarations, and a weekly run catches advisories published
+# between such changes (a failed scheduled run notifies by e-mail).
+on:
+  pull_request:
+    paths:
+      - uv.lock
+      - pyproject.toml
+      - .github/workflows/audit-worker.yaml
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install mise
+        uses: jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d # v5.2.4
+      - name: Audit the worker extras for known vulnerabilities
+        # Same invocation as the dev audit in ci.yaml (--quiet keeps uv's
+        # progress lines out of pip-audit's input).
+        #
+        # Ignored, both torch 2.10.0 and both reachable only by local code:
+        # PYSEC-2026-139 (CVE-2026-4538, deserialisation in the pt2 loading
+        # handler, no fixed release) and PYSEC-2025-194 (CVE-2025-3000,
+        # memory corruption in torch.jit.script, fixed in 2.13.0). The worker
+        # neither loads pt2 archives nor scripts code. torch is pinned by the
+        # CUDA base image and the explicit CPU and ROCm wheels, so moving it
+        # is a separate change; drop these ignores when that lands.
+        run: >-
+          uv export --no-emit-project --extra worker --extra worker-llm --format requirements-txt --quiet | uv tool run pip-audit -r /dev/stdin --strict --ignore-vuln PYSEC-2026-139 --ignore-vuln PYSEC-2025-194
