@@ -116,3 +116,10 @@ class TestTheDownloadCapIsReachable:
         anchor = re.search(r"x-download-env: &download-env\n((?:\s{2}\S.*\n)+)", _COMPOSE.read_text())
         assert anchor, "x-download-env anchor not found"
         assert "YOUTUBE_MAX_DOWNLOAD_SIZE" in anchor.group(1)
+
+
+def test_frontend_gets_a_placeholder_not_the_hf_token():
+    # The frontend only checks whether a token exists; the workers need it.
+    envs = _service_environments()
+    assert envs["frontend"]["HF_TOKEN"] == "${HF_TOKEN:+configured}"
+    assert envs["worker-gpu"]["HF_TOKEN"] == "${HF_TOKEN:-}"

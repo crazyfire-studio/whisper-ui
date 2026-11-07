@@ -145,6 +145,28 @@ class TestSecurityHeaders:
         assert missing == [], f"templates reference hosts not allowed by the CSP: {missing}"
 
 
+class TestApiSchemaAndErrors:
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_api_schema_pages_are_not_served(self, client, path):
+        assert client.get(path).status_code == 404
+
+    def test_unhandled_error_response_carries_request_id_and_security_headers(self, app, client, caplog):
+        def boom():
+            raise RuntimeError("/secret/path exploded")
+
+        app.add_api_route("/boom-for-test", boom)
+        with caplog.at_level("ERROR", logger="whisper_ui.web.app"):
+            resp = client.get("/boom-for-test", headers={"X-Request-ID": "deadbeefcafe"})
+
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Internal Server Error"}
+        assert resp.headers["X-Request-ID"] == "deadbeefcafe"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Frame-Options"] == "SAMEORIGIN"
+        record = next(r for r in caplog.records if "Unhandled error" in r.getMessage())
+        assert record.request_id == "deadbeefcafe"
+
+
 class TestMetricsEndpoint:
     def test_metrics_returns_prometheus_exposition(self, client):
         # app fixture uses a MagicMock redis, so the RQ gauges degrade out; the

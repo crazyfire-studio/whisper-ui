@@ -87,7 +87,10 @@ services:
     environment:
       !!merge <<: [*core-env, *timeout-env]
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
-      HF_TOKEN: ${HF_TOKEN:-}
+      # The frontend only needs to know whether a token exists (it enables
+      # the diarization toggle) and never calls Hugging Face, so it gets a
+      # placeholder instead of the token itself (least privilege).
+      HF_TOKEN: ${HF_TOKEN:+configured}
       DIARIZE_HEARTBEAT_INTERVAL: ${DIARIZE_HEARTBEAT_INTERVAL:-30}
       # Initial state of the upload-form diarization toggle (clamped at render
       # time by whether HF_TOKEN is set — see diarization_default_for_form).

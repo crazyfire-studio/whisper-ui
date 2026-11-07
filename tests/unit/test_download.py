@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from whisper_ui.core.constants import YT_DLP_MAX_HEIGHT
+from whisper_ui.core import messages
+from whisper_ui.core.constants import GDRIVE_SOCKET_TIMEOUT, YT_DLP_MAX_HEIGHT
 from whisper_ui.core.exceptions import DownloadError
 from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.pipeline.download import _MAX_DOWNLOAD_ATTEMPTS, DownloadStage
@@ -581,7 +582,7 @@ class TestGoogleDriveDownload:
     def test_successful_gdrive_download(self, context, download_dir):
         resolved_file = str(download_dir / "meeting_recording.m4a")
 
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output)
             if out_path.is_dir():
                 out_path = out_path / "meeting_recording.m4a"
@@ -599,7 +600,7 @@ class TestGoogleDriveDownload:
         assert result["video_title"] == "meeting_recording"
 
     def test_gdrive_progress_callback(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"fake audio content")
             return str(out_path)
@@ -663,7 +664,7 @@ class TestGoogleDriveDownload:
                 stage.execute(context)
 
     def test_gdrive_empty_file_raises(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"")
             return str(out_path)
@@ -679,7 +680,7 @@ class TestGoogleDriveDownload:
     def test_gdrive_file_exceeding_size_cap_raises_and_deletes(self, context, download_dir):
         # Drive files carry no duration metadata, so the byte cap is the only
         # guard against an oversized file filling the disk.
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -696,7 +697,7 @@ class TestGoogleDriveDownload:
     def test_gdrive_size_cap_message_uses_fractional_megabytes(self, context, download_dir):
         # Integer division understated both numbers (a sub-MB file read
         # "0 MB"); the message must carry one decimal place.
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * int(1.5 * 1024 * 1024))
             return str(out_path)
@@ -710,7 +711,7 @@ class TestGoogleDriveDownload:
                 stage.execute(context)
 
     def test_gdrive_file_within_size_cap_succeeds(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -725,7 +726,7 @@ class TestGoogleDriveDownload:
         assert result["input_path"] == str(download_dir / "audio.mp3")
 
     def test_gdrive_size_cap_disabled_by_default(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -739,8 +740,67 @@ class TestGoogleDriveDownload:
 
         assert result["input_path"] == str(download_dir / "audio.mp3")
 
+    @staticmethod
+    def _chunked_gdown(name: str, payload: bytes, *, declare_length: bool, chunk: int = 10) -> tuple[MagicMock, list]:
+        """A gdown stand-in that, like gdown 6.4, writes <name>.part chunk by
+        chunk, calls ``progress`` after each write, and publishes on success."""
+        calls: list[dict[str, Any]] = []
+
+        def download(url, output, **kwargs):
+            calls.append(kwargs)
+            partial = Path(output) / f"{name}.part"
+            total = len(payload) if declare_length else None
+            with partial.open("wb") as fh:
+                for i in range(0, len(payload), chunk):
+                    fh.write(payload[i : i + chunk])
+                    kwargs["progress"](min(i + chunk, len(payload)), total)
+            final = Path(output) / name
+            partial.rename(final)
+            return str(final)
+
+        mock_gdown = MagicMock()
+        mock_gdown.download = download
+        return mock_gdown, calls
+
+    def test_gdrive_declared_length_over_cap_stops_at_first_chunk(self, context, download_dir):
+        mock_gdown, _ = self._chunked_gdown("audio.mp3", b"x" * 100, declare_length=True)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            stage = DownloadStage(max_file_size=50)
+            with pytest.raises(DownloadError, match="larger than the maximum allowed"):
+                stage.execute(context)
+        assert list(download_dir.iterdir()) == []
+
+    def test_gdrive_undeclared_length_is_cut_off_past_the_cap(self, context, download_dir):
+        mock_gdown, _ = self._chunked_gdown("audio.mp3", b"x" * 100, declare_length=False)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            stage = DownloadStage(max_file_size=50)
+            with pytest.raises(DownloadError, match=r"larger than the maximum allowed \(50 bytes\)"):
+                stage.execute(context)
+        assert list(download_dir.iterdir()) == []
+
+    def test_gdrive_streamed_file_at_the_cap_succeeds(self, context, download_dir):
+        mock_gdown, calls = self._chunked_gdown("audio.mp3", b"x" * 50, declare_length=True)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            result = DownloadStage(max_file_size=50).execute(context)
+        assert result["input_path"] == str(download_dir / "audio.mp3")
+        assert calls[0]["timeout"] == GDRIVE_SOCKET_TIMEOUT
+
+    def test_gdrive_failure_removes_the_partial_file(self, context, download_dir):
+        def download(url, output, **kwargs):
+            (Path(output) / "audio.mp3.part").write_bytes(b"x" * 10)
+            raise ConnectionError("reset by peer")
+
+        mock_gdown = MagicMock()
+        mock_gdown.download = download
+        with (
+            patch.dict("sys.modules", {"gdown": mock_gdown}),
+            pytest.raises(DownloadError, match="Failed to download from Google Drive"),
+        ):
+            DownloadStage().execute(context)
+        assert list(download_dir.iterdir()) == []
+
     def test_gdrive_unsupported_extension_raises(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "document.txt"
             out_path.write_bytes(b"some text content")
             return str(out_path)
@@ -953,3 +1013,98 @@ class TestTwitterDownload:
             pytest.raises(DownloadError, match="exceeds the maximum"),
         ):
             DownloadStage(max_duration=3600).execute(context)
+
+
+class TestDownloadUserMessages:
+    """Failures with a known, display-safe reason carry it as user_message;
+    raw yt-dlp or gdown text never does."""
+
+    @pytest.fixture
+    def download_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "downloads"
+        d.mkdir()
+        return d
+
+    @staticmethod
+    def _ytdlp(info: dict[str, Any] | None = None, error: Exception | None = None) -> MagicMock:
+        ydl = MagicMock()
+        if error is not None:
+            ydl.extract_info.side_effect = error
+        else:
+            ydl.extract_info.return_value = info
+        ydl.__enter__ = lambda self: self
+        ydl.__exit__ = MagicMock(return_value=False)
+        module = MagicMock()
+        module.YoutubeDL.return_value = ydl
+        return module
+
+    def _fail(self, download_dir: Path, url: str, modules: dict[str, Any], **stage_kwargs: Any) -> DownloadError:
+        context = {"source_url": url, "download_dir": str(download_dir), "input_path": ""}
+        with (
+            patch.dict("sys.modules", modules),
+            patch("whisper_ui.pipeline.download.time.sleep"),
+            pytest.raises(DownloadError) as exc_info,
+        ):
+            DownloadStage(**stage_kwargs).execute(context)
+        return exc_info.value
+
+    _YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    _X = "https://x.com/someone/status/1234567890"
+    _DRIVE = "https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMnOpQrStUvWxYz"
+
+    def test_live_stream(self, download_dir):
+        module = self._ytdlp({"duration": None, "is_live": True})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_LIVE_STREAM
+
+    def test_too_long(self, download_dir):
+        module = self._ytdlp({"duration": 9000})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module}, max_duration=5400)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LONG.format(hours=1.5)
+        assert "1.5 小時" in exc.user_message
+
+    def test_too_large(self, download_dir):
+        module = self._ytdlp({"duration": 60, "filesize": 3 * 1024**3})
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module}, max_download_size=2 * 1024**3)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LARGE.format(limit="2.0 GB")
+
+    def test_x_post_restricted(self, download_dir):
+        module = self._ytdlp(error=Exception("Sorry, you are not authorized to view this tweet. Log in."))
+        exc = self._fail(download_dir, self._X, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_TWITTER_RESTRICTED
+
+    def test_transient_after_retries(self, download_dir):
+        module = self._ytdlp(error=Exception("HTTP Error 429: Too Many Requests"))
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message == messages.DOWNLOAD_SOURCE_TRANSIENT
+
+    def test_unclassified_ytdlp_failure_has_no_user_message(self, download_dir):
+        module = self._ytdlp(error=Exception("ERROR: something odd at /internal/path"))
+        exc = self._fail(download_dir, self._YT, {"yt_dlp": module})
+        assert exc.user_message is None
+
+    def test_drive_file_not_shared(self, download_dir):
+        gdown = MagicMock()
+        gdown.download.side_effect = Exception("Cannot retrieve the public link of the file.")
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown})
+        assert exc.user_message == messages.DOWNLOAD_GDRIVE_UNAVAILABLE
+
+    def test_drive_unsupported_format(self, download_dir):
+        def download(url, output, **kwargs):
+            out = Path(output) / "notes.txt"
+            out.write_bytes(b"text")
+            return str(out)
+
+        gdown = MagicMock()
+        gdown.download = download
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown})
+        assert exc.user_message == messages.DOWNLOAD_UNSUPPORTED_FORMAT
+
+    def test_drive_too_large(self, download_dir):
+        def download(url, output, **kwargs):
+            kwargs["progress"](10, 5000)
+
+        gdown = MagicMock()
+        gdown.download = download
+        exc = self._fail(download_dir, self._DRIVE, {"gdown": gdown}, max_file_size=2048)
+        assert exc.user_message == messages.DOWNLOAD_TOO_LARGE.format(limit="2.0 KB")
