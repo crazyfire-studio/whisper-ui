@@ -68,8 +68,8 @@ def get_audio_duration_seconds(path: Path | str, *, job_id: str | None = None) -
         return None
     except FileNotFoundError:
         # ffprobe binary is not installed in this image. Operational
-        # consequence: upload routes fall back to JOB_TIMEOUT_DEFAULT
-        # instead of the dynamic audio-duration-based timeout.
+        # consequence: the duration-scaled stage timeouts keep
+        # JOB_TIMEOUT_DEFAULT instead of being sized from the audio.
         logger.warning("ffprobe binary missing while probing %s", label)
         return None
     except OSError as exc:

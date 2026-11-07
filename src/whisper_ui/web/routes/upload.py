@@ -27,7 +27,6 @@ from whisper_ui.core.url_validation import (
     validate_youtube_playlist_url,
     validate_youtube_url,
 )
-from whisper_ui.pipeline.audio_probe import get_audio_duration_seconds
 from whisper_ui.pipeline.preprocess import SUPPORTED_EXTENSIONS
 from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.deps import CurrentUserDep, DbDep, FileStoreDep, RedisDep, SettingsDep, templates
@@ -301,7 +300,6 @@ async def upload_submit(
             continue
 
         job.filepath = str(dest)
-        job.duration = await asyncio.to_thread(get_audio_duration_seconds, dest, job_id=job.id)
         job.status = JobStatus.QUEUED
         db.insert_job(job)
         logger.info(
