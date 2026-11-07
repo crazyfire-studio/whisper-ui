@@ -337,11 +337,12 @@ async def register_submit(
     if not bootstrap:
         rate_limit.record_register_attempt(redis, ip=ip, window_seconds=settings.login_lockout_seconds)
 
+    password_hash = await asyncio.to_thread(users_repo.hash_password, password)
     try:
-        user = users_repo.create_user(
+        user = users_repo.insert_user(
             db.conn,
             username=username,
-            password=password,
+            password_hash=password_hash,
             is_admin=bootstrap,
         )
     except sqlite3.IntegrityError:
