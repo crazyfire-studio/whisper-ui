@@ -248,9 +248,9 @@ ejs_coupling = "pinned"
 # YT_DLP_MARKERS_VERIFIED_AGAINST uses yt-dlp's own spelling
 # (yt_dlp.version.__version__, zero-padded), but this key is compared against
 # importlib.metadata.version("yt-dlp"), which drops leading zeros: 2026.08.19 is
-# measured as "2026.8.19". For 2026.10.21 the two spellings match; for a month or
+# measured as "2026.8.19". For 2026.10.26 the two spellings match; for a month or
 # day below 10, drop the zero here or the check fails.
-markers_verified_against = "2026.10.21"
+markers_verified_against = "2026.10.26"
 
 # No PO Token provider is configured and no code reads one.
 po_token_hook = "absent"
