@@ -339,13 +339,12 @@ const UPLOAD_PRESETS = {
   lecture:   { language: 'zh', enable_diarization: false, num_speakers: 0, convert_to_traditional: true,  llm_correction_enabled: true  }
 };
 
-// Room for the multipart boundaries and form fields on top of the file bytes.
-const MULTIPART_HEADROOM = 1024 * 1024;
-
 function uploadForm() {
   return {
     maxFileSize: {{ max_upload_size }},
     maxRequestSize: {{ max_upload_request_size }},
+    // Room for the multipart framing on top of the file bytes (MULTIPART_HEADROOM_BYTES).
+    multipartHeadroom: {{ multipart_headroom }},
     tab: '{{ initial_tab|default("files") }}',
     uploading: false,
     progress: 0,
@@ -418,7 +417,7 @@ function uploadForm() {
           .replace('{name}', tooBig.name).replace('{limit}', this.formatSize(this.maxFileSize));
       } else {
         const total = this.selectedFiles.reduce((sum, f) => sum + f.size, 0);
-        if (total + MULTIPART_HEADROOM > this.maxRequestSize) {
+        if (total + this.multipartHeadroom > this.maxRequestSize) {
           message = {{ labels.UPLOAD_REQUEST_TOO_LARGE|tojson }}.replace('{limit}', this.formatSize(this.maxRequestSize));
         }
       }

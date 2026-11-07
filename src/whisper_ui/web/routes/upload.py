@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from markupsafe import escape
 
-from whisper_ui.core.constants import MAX_BATCH_SIZE
+from whisper_ui.core.constants import MAX_BATCH_SIZE, MULTIPART_HEADROOM_BYTES
 from whisper_ui.core.languages import DEFAULT_WHISPER_MODEL, LANGUAGE_CHOICES, WHISPER_MODELS
 from whisper_ui.core.models import Job, JobStatus
 from whisper_ui.core.url_validation import (
@@ -164,6 +164,7 @@ async def upload_page(request: Request, settings: SettingsDep, user: CurrentUser
             "initial_tab": initial_tab,
             "max_upload_size": settings.max_upload_size,
             "max_upload_request_size": settings.max_upload_request_size,
+            "multipart_headroom": MULTIPART_HEADROOM_BYTES,
         },
     )
 

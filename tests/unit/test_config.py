@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from whisper_ui.core.config import Settings, get_settings
+from whisper_ui.core.constants import MULTIPART_HEADROOM_BYTES
 
 
 def _make_settings(tmp_path, **overrides):
@@ -275,6 +276,12 @@ class TestUploadRequestSizeValidator:
         with pytest.raises(ValidationError, match="max_upload_request_size"):
             _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=1000)
 
-    def test_request_cap_equal_to_file_cap_is_accepted(self, tmp_path):
-        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
-        assert settings.max_upload_request_size == 2000
+    def test_request_cap_equal_to_file_cap_is_rejected(self, tmp_path):
+        # The multipart framing would push a file at the per-file cap over it.
+        with pytest.raises(ValidationError, match="multipart framing"):
+            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
+
+    def test_request_cap_with_room_for_the_framing_is_accepted(self, tmp_path):
+        size = 2000 + MULTIPART_HEADROOM_BYTES
+        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=size)
+        assert settings.max_upload_request_size == size

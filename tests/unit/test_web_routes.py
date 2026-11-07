@@ -1577,6 +1577,7 @@ class TestUploadRequestSizeLimit:
 
     @pytest.fixture
     def small_cap_app(self, app, settings):
+        # model_copy skips validation, so a cap this small is allowed here.
         capped = settings.model_copy(update={"max_upload_size": 500, "max_upload_request_size": 1000})
         with patch("whisper_ui.core.config.get_settings", return_value=capped):
             application = create_app()
@@ -1606,6 +1607,7 @@ class TestUploadRequestSizeLimit:
         resp = client.get("/upload")
         assert f"maxFileSize: {settings.max_upload_size}," in resp.text
         assert f"maxRequestSize: {settings.max_upload_request_size}," in resp.text
+        assert "multipartHeadroom: 1048576," in resp.text
 
 
 class TestUploadURLPost:
