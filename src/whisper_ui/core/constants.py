@@ -33,6 +33,11 @@ STALE_JOB_CHECK_INTERVAL = 60  # seconds
 # the configured worker throughput simply wait in the queue (the liveness-aware
 # stale reaper spares queued work and re-arms its state TTL while it waits).
 MAX_BATCH_SIZE = 100
+# Room above the file bytes for a multipart request's framing: boundaries,
+# part headers and the form fields. A batch at the 100-file limit adds tens of
+# KB. The upload form keeps this much below MAX_UPLOAD_REQUEST_SIZE, and
+# Settings require the request cap to fit one file at MAX_UPLOAD_SIZE plus it.
+MULTIPART_HEADROOM_BYTES = 1024 * 1024
 
 # Upper bound on ids per bulk job action (retry / delete / export). The UI
 # selects at most a page of jobs at a time, so this is far above any
