@@ -1,3 +1,10 @@
+# Node hooks (prettier, markdownlint-cli2) get an explicit Node release, on the
+# major that mise.toml pins. Left to its default, nodeenv downloads the newest
+# release; on 2026-11-07 nodejs.org listed v27.0.0-alpha.0.0.0 first, which
+# nodeenv cannot parse, so every fresh hook install failed. "system" is no
+# fix: it picks whichever node is first on PATH.
+default_language_version:
+  node: "24.22.2"
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
