@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from whisper_ui.core.constants import MULTIPART_HEADROOM_BYTES
 from whisper_ui.core.languages import DEFAULT_WHISPER_MODEL
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -160,6 +161,12 @@ class Settings(BaseSettings):
 
     # Upload
     max_upload_size: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    # Cap on one upload request. The upload page sends a whole batch in one
+    # multipart request, and Starlette spools all of it to disk before the
+    # per-file cap above is checked, so this bounds what one request can write.
+    # Must leave room for one file at max_upload_size plus the multipart framing
+    # (MULTIPART_HEADROOM_BYTES), or a file at the per-file cap could never fit.
+    max_upload_request_size: int = 10 * 1024 * 1024 * 1024  # 10 GB
     # Optional retention: when > 0, the web app's background loop reclaims
     # the upload directory of any COMPLETED job, and of any FAILED URL job,
     # whose updated_at is older than this many days. A FAILED upload job is
@@ -265,6 +272,17 @@ class Settings(BaseSettings):
         """VAD without a model file cannot work; fail at startup, not mid-job."""
         if self.whispercpp_vad and not self.whispercpp_vad_model:
             raise ValueError("whispercpp_vad_model must be set when whispercpp_vad is enabled")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_upload_request_size(self) -> Settings:
+        """A request cap that cannot hold one file at the per-file cap would refuse files the route accepts."""
+        minimum = self.max_upload_size + MULTIPART_HEADROOM_BYTES
+        if self.max_upload_request_size < minimum:
+            raise ValueError(
+                f"max_upload_request_size ({self.max_upload_request_size}) must be >= max_upload_size "
+                f"({self.max_upload_size}) + {MULTIPART_HEADROOM_BYTES} bytes of multipart framing = {minimum}"
+            )
         return self
 
     @field_validator("ollama_base_url", mode="before")

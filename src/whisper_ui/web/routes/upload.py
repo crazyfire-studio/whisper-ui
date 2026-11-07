@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from markupsafe import escape
 
-from whisper_ui.core.constants import MAX_BATCH_SIZE
+from whisper_ui.core.constants import MAX_BATCH_SIZE, MULTIPART_HEADROOM_BYTES
 from whisper_ui.core.languages import DEFAULT_WHISPER_MODEL, LANGUAGE_CHOICES, WHISPER_MODELS
 from whisper_ui.core.models import Job, JobStatus
 from whisper_ui.core.url_validation import (
@@ -27,7 +27,6 @@ from whisper_ui.core.url_validation import (
     validate_youtube_playlist_url,
     validate_youtube_url,
 )
-from whisper_ui.pipeline.audio_probe import get_audio_duration_seconds
 from whisper_ui.pipeline.preprocess import SUPPORTED_EXTENSIONS
 from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.deps import CurrentUserDep, DbDep, FileStoreDep, RedisDep, SettingsDep, templates
@@ -72,7 +71,7 @@ def _build_upload_toast(
     return message, category
 
 
-def _format_size(size_bytes: int) -> str:
+def format_size(size_bytes: int) -> str:
     if size_bytes >= 1024 * 1024 * 1024:
         return f"{size_bytes / (1024**3):.1f} GB"
     if size_bytes >= 1024 * 1024:
@@ -162,6 +161,9 @@ async def upload_page(request: Request, settings: SettingsDep, user: CurrentUser
             "supported_languages": LANGUAGE_CHOICES,
             "whisper_models": WHISPER_MODELS,
             "initial_tab": initial_tab,
+            "max_upload_size": settings.max_upload_size,
+            "max_upload_request_size": settings.max_upload_request_size,
+            "multipart_headroom": MULTIPART_HEADROOM_BYTES,
         },
     )
 
@@ -284,7 +286,7 @@ async def upload_submit(
             continue
         if not within_limit:
             dest.unlink(missing_ok=True)
-            limit_str = _format_size(max_size)
+            limit_str = format_size(max_size)
             logger.warning(
                 "upload skipped: user_id=%s filename=%r exceeds max_size=%d",
                 user.id,
@@ -298,7 +300,6 @@ async def upload_submit(
             continue
 
         job.filepath = str(dest)
-        job.duration = await asyncio.to_thread(get_audio_duration_seconds, dest, job_id=job.id)
         job.status = JobStatus.QUEUED
         db.insert_job(job)
         logger.info(
