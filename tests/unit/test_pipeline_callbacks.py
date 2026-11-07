@@ -102,3 +102,34 @@ class TestFormatFailureMessage:
         from whisper_ui.ui import labels as ui_labels
 
         assert format_failure_message(None, None) == ui_labels.JOBS_STAGE_FAILED_GENERIC
+
+    def test_pipeline_error_with_user_message_shows_it(self):
+        from whisper_ui.core.exceptions import DownloadError
+
+        exc = DownloadError("yt-dlp: ERROR: [twitter] 123: login required", user_message="這則貼文需要登入。")
+        assert format_failure_message(DownloadError, exc) == "這則貼文需要登入。"
+
+    def test_pipeline_error_without_user_message_keeps_the_stage_label(self):
+        from whisper_ui.core.exceptions import DownloadError
+        from whisper_ui.ui import labels as ui_labels
+
+        exc = DownloadError("Failed to download video: /tmp/x")
+        assert format_failure_message(DownloadError, exc) == ui_labels.JOBS_STAGE_FAILED_DOWNLOAD
+
+    def test_user_message_is_trusted_only_on_pipeline_errors(self):
+        # A third-party exception that happens to carry the attribute is not
+        # one of ours, so its text is not known to be display-safe.
+        from whisper_ui.ui import labels as ui_labels
+
+        exc = RuntimeError("boom")
+        exc.user_message = "/secret/path"  # type: ignore[attr-defined]
+        assert format_failure_message(RuntimeError, exc) == ui_labels.JOBS_STAGE_FAILED_GENERIC
+
+    def test_user_message_survives_pickling(self):
+        import pickle
+
+        from whisper_ui.core.exceptions import DownloadError
+
+        exc = pickle.loads(pickle.dumps(DownloadError("detail", user_message="顯示文字")))
+        assert exc.user_message == "顯示文字"
+        assert str(exc) == "detail"

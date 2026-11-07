@@ -627,3 +627,20 @@ def test_rate_limited_message_rounds_wait_minutes_up():
     assert "2 分鐘" in _login_error_message("rate_limited", 90)
     assert "15 分鐘" in _login_error_message("rate_limited", 900)
     assert "1 分鐘" in _login_error_message("rate_limited", 30)
+
+
+def test_register_hashes_off_the_event_loop(app, db, monkeypatch):
+    import asyncio
+
+    real_to_thread = asyncio.to_thread
+    calls: list[object] = []
+
+    async def spy(func, /, *args, **kwargs):
+        calls.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", spy)
+    _anon_client(app).post("/register", data={"username": "founder", "password": "password123"})
+
+    assert users_repo.hash_password in calls
+    assert users_repo.get_user_by_username(db.conn, "founder") is not None

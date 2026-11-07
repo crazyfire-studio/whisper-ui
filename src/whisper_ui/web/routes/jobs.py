@@ -14,7 +14,6 @@ from markupsafe import escape
 from whisper_ui.core.constants import DEFAULT_JOBS_PER_PAGE, MAX_BULK_ACTION_IDS
 from whisper_ui.core.languages import DEFAULT_WHISPER_MODEL, LANGUAGE_CHOICES, WHISPER_MODELS
 from whisper_ui.core.models import Job, JobStatus
-from whisper_ui.pipeline.audio_probe import get_audio_duration_seconds
 from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.auth import owner_filter
 from whisper_ui.web.batch_zip import create_batch_zip
@@ -158,27 +157,6 @@ async def jobs_list_fragment(
     return templates.TemplateResponse(request=request, name="_job_list.html", context=ctx)
 
 
-def _probe_retry_duration(job: Job) -> float | None:
-    """Return the audio duration to use when sizing a retry job_timeout.
-
-    For direct uploads the filepath still points at the original file on
-    disk, so re-probing is cheap and avoids depending on the previous run
-    having populated Job.duration. For URL jobs the original file has
-    been cleaned up, so fall back to None → job_timeout_default.
-
-    Returning None here is the contract that lets calculate_job_timeout
-    fall back to settings.job_timeout_default; callers must not treat
-    None as an error.
-    """
-    if job.source_url:
-        return None
-    try:
-        return get_audio_duration_seconds(job.filepath, job_id=job.id)
-    except Exception:  # pragma: no cover - defensive, ffprobe helper already swallows
-        logger.exception("Failed to probe duration for retry of job %s", job.id)
-        return None
-
-
 async def _reset_and_enqueue_retry(job: Job, db, redis, settings, filestore) -> bool:
     """Atomically claim a FAILED job for retry and re-enqueue its pipeline.
 
@@ -190,7 +168,11 @@ async def _reset_and_enqueue_retry(job: Job, db, redis, settings, filestore) -> 
     Returns True when the enqueue succeeded; on enqueue failure the job is
     flipped back to FAILED with the shared enqueue-failure label.
     """
-    retry_duration = await asyncio.to_thread(_probe_retry_duration, job)
+    # The job keeps the duration it already has (None until a run measured it):
+    # the frontend image has no ffprobe to re-measure it with, and the worker
+    # resizes the duration-scaled stage timeouts once preprocess has probed the
+    # audio (adjust_subjob_timeouts).
+    retry_duration = job.duration
     # DB writes stay on the event-loop thread: app.state.db is a single shared
     # SQLite connection that must not be touched from a worker thread (see the
     # JobDatabase thread-safety contract). try_claim_retry is one fast atomic
@@ -449,7 +431,8 @@ async def re_transcribe_job(
             )
             return HTMLResponse(ui_labels.JOBS_RE_TRANSCRIBE_SOURCE_GONE, status_code=409)
         new_job.filepath = str(dest)
-        new_job.duration = await asyncio.to_thread(get_audio_duration_seconds, dest, job_id=new_job.id)
+        # Same audio as the source job, so its measured duration still holds.
+        new_job.duration = src.duration
 
     db.insert_job(new_job)
     try:

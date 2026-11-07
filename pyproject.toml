@@ -6,7 +6,7 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.14.1,<3",
-  "pydantic-settings>=2.16.1,<3",
+  "pydantic-settings>=2.16.2,<3",
   "redis>=8.1.0,<9",
   "rq>=2.12.0,<3",
 ]
@@ -33,7 +33,7 @@ frontend = [
 ytdlp = [
   # Floor comes from the CVE-2026-55404 patch; this extra only collapses the
   # two previous declarations into one, it does not move the version.
-  "yt-dlp>=2026.10.21",
+  "yt-dlp>=2026.10.26",
   # The JavaScript challenge solvers. yt-dlp pins the exact version it needs
   # in its own [default]/[pin] extras; we depend on the package directly
   # because those extras drag in eight more packages this project does not
@@ -47,8 +47,8 @@ worker = [
   # torch~=2.8.0 constraint conflicting with the base image's torch 2.10.0.
   # The dependencies below cover whisperx's runtime needs (minus torch/torchaudio).
   "faster-whisper>=1.1.1,<2",
-  "ctranslate2>=4.8.3",
-  "transformers>=5.20.2,<6",
+  "ctranslate2>=4.8.4",
+  "transformers>=5.21.0,<6",
   "nltk>=3.10.4",
   "numpy>=2.5.4",
   "omegaconf>=2.4.0",
@@ -64,7 +64,7 @@ worker = [
 worker-llm = ["httpx>=0.27,<1"]
 dev = [
   "whisper-ui[frontend,worker-llm]",
-  "pytest>=9.1.1,<10",
+  "pytest>=9.2.0,<10",
   "pytest-cov>=7.0,<8",
   # Parses compose.yml in tests/unit/test_compose_env_wiring.py so the wiring
   # assertions can see which *service* an env key reaches, which a regex over
@@ -248,9 +248,9 @@ ejs_coupling = "pinned"
 # YT_DLP_MARKERS_VERIFIED_AGAINST uses yt-dlp's own spelling
 # (yt_dlp.version.__version__, zero-padded), but this key is compared against
 # importlib.metadata.version("yt-dlp"), which drops leading zeros: 2026.08.19 is
-# measured as "2026.8.19". For 2026.10.21 the two spellings match; for a month or
+# measured as "2026.8.19". For 2026.10.26 the two spellings match; for a month or
 # day below 10, drop the zero here or the check fails.
-markers_verified_against = "2026.10.21"
+markers_verified_against = "2026.10.26"
 
 # No PO Token provider is configured and no code reads one.
 po_token_hook = "absent"

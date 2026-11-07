@@ -493,3 +493,17 @@ def test_parallel_reporters_from_threads_never_regress(fake_redis):
     # The highest value any writer produced is 0.20 + 199 * 0.003 ≈ 0.797
     expected_max = max(0.00 + (n_writes - 1) * 0.003, 0.20 + (n_writes - 1) * 0.003)
     assert final_progress == pytest.approx(expected_max, abs=1e-6)
+
+
+def test_every_sub_job_expires_from_the_failed_registry_within_a_week(fake_redis, fake_settings, tmp_path):
+    # RQ keeps failed jobs for a year by default, in a Redis with noeviction.
+    from whisper_ui.core.constants import RQ_FAILURE_TTL_SECONDS
+
+    job = Job(id="job-ttl", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.QUEUED)
+    enqueue_pipeline(job, redis=fake_redis, settings=fake_settings, filestore=MagicMock())
+
+    gen = pipeline_dispatcher._current_generation(fake_redis, job.id)
+    sub_ids = pipeline_dispatcher._load_subjob_ids(fake_redis, job.id, gen)
+    assert sub_ids
+    assert {RQJob.fetch(sub_id, connection=fake_redis).failure_ttl for sub_id in sub_ids} == {RQ_FAILURE_TTL_SECONDS}
+    assert RQ_FAILURE_TTL_SECONDS == 7 * 24 * 3600

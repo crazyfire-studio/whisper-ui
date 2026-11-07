@@ -33,6 +33,11 @@ STALE_JOB_CHECK_INTERVAL = 60  # seconds
 # the configured worker throughput simply wait in the queue (the liveness-aware
 # stale reaper spares queued work and re-arms its state TTL while it waits).
 MAX_BATCH_SIZE = 100
+# Room above the file bytes for a multipart request's framing: boundaries,
+# part headers and the form fields. A batch at the 100-file limit adds tens of
+# KB. The upload form keeps this much below MAX_UPLOAD_REQUEST_SIZE, and
+# Settings require the request cap to fit one file at MAX_UPLOAD_SIZE plus it.
+MULTIPART_HEADROOM_BYTES = 1024 * 1024
 
 # Upper bound on ids per bulk job action (retry / delete / export). The UI
 # selects at most a page of jobs at a time, so this is far above any
@@ -57,6 +62,10 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
+
+# gdown's network timeout in seconds: a stalled Drive response then fails the
+# download instead of holding the worker until the stage's job timeout.
+GDRIVE_SOCKET_TIMEOUT = 30
 
 # Substrings (lowercase) that mark a *transient* yt-dlp failure: the source is
 # throttling or briefly down, not gone. The headline case is X throttling its
@@ -89,7 +98,7 @@ YT_DLP_TRANSIENT_MARKERS = (
 # yt-dlp without re-reading its error strings is how a heuristic like this
 # rots unnoticed, so test_markers_are_bound_to_the_installed_yt_dlp fails until
 # someone re-checks and moves this forward in the same commit.
-YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.10.21"
+YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.10.26"
 
 # Ceiling on the downloaded video track's height. The pipeline only needs the
 # audio; the video track is kept so the viewer can play back the original
@@ -142,6 +151,11 @@ YT_DLP_VIDEO_FORMAT = (
 # REDIS_PROCESSING_EXPIRY now lives in Settings.redis_processing_expiry.
 REDIS_COMPLETED_EXPIRY = 86400  # 24 hours
 REDIS_FAILED_EXPIRY = 86400  # 24 hours
+# How long RQ keeps a failed sub-job (its args and traceback) in the failed
+# registry. RQ's default is a year, and the Redis here runs with noeviction;
+# the job row in SQLite already records the failure, and finalize_failure logs
+# the raw exception, so a week is enough to inspect one by hand.
+RQ_FAILURE_TTL_SECONDS = 604_800  # 7 days
 
 # Pipeline TTLs at a glance (three layers, longest to shortest):
 #   PIPELINE_STATE_TTL_SECONDS (here, 7d)

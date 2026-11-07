@@ -89,9 +89,9 @@ restricts the network the application is reachable from.
 - Set `METRICS_TOKEN` to require `Authorization: Bearer <token>` on `/metrics`
   when the box is reachable publicly. `/metrics` is open by default (it exposes
   only counts/depths, no PII); a token or a reverse-proxy block hardens it.
-- Set `REDIS_PASSWORD` before exposing the bundled Redis beyond the local
-  Docker network. Compose always passes `--requirepass "${REDIS_PASSWORD:-}"`,
-  so an unset password leaves Redis open (empty password = no auth).
+- `REDIS_PASSWORD` is required: compose refuses to start without it and
+  passes it to Redis as `--requirepass`. Redis holds pickled RQ jobs, so an
+  unauthenticated Redis would let anyone who reaches it run code in the workers.
 - Never commit `.env` files or HuggingFace tokens to version control.
 - Run Docker containers with minimal privileges.
 - Keep dependencies updated; the project ships a GitHub Dependabot

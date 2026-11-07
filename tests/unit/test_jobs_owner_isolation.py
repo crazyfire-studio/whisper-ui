@@ -167,6 +167,28 @@ def test_alice_gets_404_on_bobs_delete(app, db, filestore, test_user, bob):
     assert resp.status_code == 404
 
 
+def test_alice_gets_404_on_bobs_share_create(app, db, filestore, test_user, bob):
+    job = _save_completed_job(db, filestore, owner_id=bob.id)
+    client = authed_test_client(app, test_user)
+
+    resp = client.post(f"/viewer/{job.id}/share")
+
+    assert resp.status_code == 404
+    assert db.get_job(job.id).share_token is None
+
+
+def test_alice_gets_404_on_bobs_share_revoke(app, db, filestore, test_user, bob):
+    job = _save_completed_job(db, filestore, owner_id=bob.id)
+    job.share_token = "bob-share-token-not-real"
+    db.update_job(job)
+    client = authed_test_client(app, test_user)
+
+    resp = client.delete(f"/viewer/{job.id}/share")
+
+    assert resp.status_code == 404
+    assert db.get_job(job.id).share_token == "bob-share-token-not-real"
+
+
 def test_alice_gets_404_on_bobs_batch_download(app, db, filestore, test_user, bob):
     batch_id = uuid.uuid4().hex
     job = _save_completed_job(db, filestore, owner_id=bob.id)

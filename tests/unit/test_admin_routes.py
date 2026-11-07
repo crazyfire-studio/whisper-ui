@@ -524,3 +524,32 @@ def test_admin_toggle_admin_catches_value_error_from_set_admin(app, db, test_adm
 
     assert resp.status_code == 303
     assert resp.headers["location"].endswith("error=user_not_found")
+
+
+@pytest.fixture
+def threaded_calls(monkeypatch):
+    """Record which callables the routes hand to asyncio.to_thread."""
+    import asyncio
+
+    real_to_thread = asyncio.to_thread
+    calls: list[object] = []
+
+    async def spy(func, /, *args, **kwargs):
+        calls.append(func)
+        return await real_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", spy)
+    return calls
+
+
+def test_admin_create_user_hashes_off_the_event_loop(app, db, test_admin, threaded_calls):
+    authed_test_client(app, test_admin).post("/admin/users", data={"username": "newuser", "password": "password123"})
+    assert users_repo.hash_password in threaded_calls
+    assert users_repo.get_user_by_username(db.conn, "newuser") is not None
+
+
+def test_admin_reset_password_hashes_off_the_event_loop(app, db, test_admin, bob, threaded_calls):
+    authed_test_client(app, test_admin).post(
+        f"/admin/users/{bob.id}/reset-password", data={"new_password": "newpassword42"}
+    )
+    assert users_repo.hash_password in threaded_calls

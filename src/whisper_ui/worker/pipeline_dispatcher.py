@@ -26,6 +26,7 @@ from rq import Callback, Queue
 
 from whisper_ui.core.constants import (
     PIPELINE_STATE_TTL_SECONDS,
+    RQ_FAILURE_TTL_SECONDS,
     WORKER_QUEUE_CPU,
     WORKER_QUEUE_GPU,
     WORKER_QUEUE_IO,
@@ -323,6 +324,7 @@ def enqueue_pipeline(
             # already-produced transcript instead of failing the whole job.
             "meta": {**meta, "stage": func.__name__},
             "on_failure": failure_cb,
+            "failure_ttl": RQ_FAILURE_TTL_SECONDS,
         }
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
