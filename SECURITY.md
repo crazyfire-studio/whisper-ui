@@ -38,11 +38,15 @@ deployment:
 - **Session revocation**: each user row carries a `session_version` that is
   bumped on password reset or account deactivation, invalidating any
   outstanding session cookie.
-- **Defense-in-depth headers**: `X-Content-Type-Options`, `X-Frame-Options`,
-  `Referrer-Policy` and a Content-Security-Policy set on every response
-  (`web/app.py` `SecurityHeadersMiddleware`). The CSP allows scripts from the
-  app itself, jsDelivr (htmx / Alpine.js) and inline blocks carrying the
-  per-request nonce. HSTS is not set: it belongs to the upstream TLS proxy.
+- **Defense-in-depth headers**: responses from the app's routes and static
+  files carry `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+  and a Content-Security-Policy (`web/app.py` `SecurityHeadersMiddleware`).
+  The CSP allows scripts from the app itself, jsDelivr (htmx / Alpine.js) and
+  inline blocks carrying the per-request nonce. Responses produced outside
+  that middleware carry less: the login redirects and CSRF rejections that
+  `AuthMiddleware` returns itself carry none of these headers, and the
+  unhandled-error 500 carries the first three but no CSP. HSTS is not set: it
+  belongs to the upstream TLS proxy.
 - **Upload hardening**: filenames stripped to basename, sizes capped via
   streamed reads, allowed extensions enumerated, output paths derived from
   job IDs (`web/routes/upload.py`, `storage/filestore.py`).
