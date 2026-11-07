@@ -18,7 +18,8 @@ x-app-depends: &app-depends
   volume-init:
     condition: service_completed_successfully
 x-core-env: &core-env
-  REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379/0
+  # Required: compose refuses to start without it (see .env.example).
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env, e.g. openssl rand -hex 32}@redis:6379/0
   # Redis client resiliency — read by the web app and every worker.
   REDIS_SOCKET_TIMEOUT: ${REDIS_SOCKET_TIMEOUT:-10}
   REDIS_SOCKET_CONNECT_TIMEOUT: ${REDIS_SOCKET_CONNECT_TIMEOUT:-5}
@@ -141,8 +142,8 @@ services:
     # options — a balanced-quote string command does inject (e.g. a password
     # `pw" --port 9999 "` would add `--port`). Keeping `redis-server` as argv[0]
     # lets the official entrypoint still chown /data and drop to the `redis` user.
-    # `--requirepass ""` (empty, when REDIS_PASSWORD is unset) means no auth,
-    # matching the previous omit-when-unset behaviour.
+    # REDIS_PASSWORD is required: Redis holds pickled RQ jobs, so anyone who can
+    # reach it unauthenticated can run code in the workers.
     command:
       - redis-server
       - --appendonly
@@ -152,18 +153,18 @@ services:
       - --maxmemory-policy
       - noeviction
       - --requirepass
-      - "${REDIS_PASSWORD:-}"
+      - "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env, e.g. openssl rand -hex 32}"
     # Pass the password as a container env so the healthcheck references it as a
     # runtime shell variable (the `$$` is compose-escaped to a literal `$`), kept
     # in double quotes. The value is then data the container shell expands, never
     # interpolated into the script text — so a password with shell metacharacters
     # cannot break out (unlike compose-interpolating it into the sh -c string).
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env, e.g. openssl rand -hex 32}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "[ -z \"$$REDIS_PASSWORD\" ] || export REDISCLI_AUTH=\"$$REDIS_PASSWORD\"; redis-cli ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -430,7 +431,7 @@ services:
     image: oliver006/redis_exporter:v1.67.0
     environment:
       - REDIS_ADDR=redis://redis:6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env, e.g. openssl rand -hex 32}
     depends_on:
       redis:
         condition: service_healthy
