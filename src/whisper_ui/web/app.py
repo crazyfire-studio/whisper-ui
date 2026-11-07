@@ -14,9 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
+from whisper_ui.core.logging_setup import reset_request_context, set_request_context
 from whisper_ui.web.auth import AuthMiddleware
 from whisper_ui.web.deps import templates
-from whisper_ui.web.middleware.request_id import RequestIdMiddleware
+from whisper_ui.web.middleware.request_id import REQUEST_ID_HEADER, RequestIdMiddleware, loggable_path
 
 
 def _build_csp(nonce: str) -> str:
@@ -49,6 +50,13 @@ def _build_csp(nonce: str) -> str:
     )
 
 
+_STATIC_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "same-origin",
+}
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Defense-in-depth headers for the internal-network deployment.
 
@@ -62,9 +70,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = nonce
         response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
+        for name, value in _STATIC_SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
         response.headers.setdefault("Content-Security-Policy", _build_csp(nonce))
         return response
 
@@ -262,7 +269,10 @@ def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
     setup_logging(log_level=settings.log_level, log_json=settings.log_json)
-    application = FastAPI(title="Whisper UI", lifespan=lifespan)
+    # No /docs, /redoc or /openapi.json: the app serves HTML for a browser,
+    # and the schema would list every route, form field and parameter to any
+    # signed-in user (registration is open by default).
+    application = FastAPI(title="Whisper UI", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     # bootstrap_done flips True after the first active admin is observed.
     # Initialised here (not in lifespan) so AuthMiddleware can read it
     # before the first request completes even on a fresh process.
@@ -331,8 +341,21 @@ def create_app() -> FastAPI:
         # Anything that escapes a route handler reaches here; log the full
         # traceback for operators but never let the exception text reach the
         # client — it can contain file paths or partially-rendered SQL.
-        logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+        #
+        # This runs in ServerErrorMiddleware, outside every app middleware, so
+        # the request id and the security headers are added here: the id lets a
+        # user's report be matched to this log line and the access log line.
+        request_id = getattr(request.state, "request_id", "-")
+        tokens = set_request_context(request_id=request_id, user_id="-")
+        try:
+            logger.exception("Unhandled error on %s %s", request.method, loggable_path(request.url.path))
+        finally:
+            reset_request_context(tokens)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error"},
+            headers={REQUEST_ID_HEADER: request_id, **_STATIC_SECURITY_HEADERS},
+        )
 
     return application
 

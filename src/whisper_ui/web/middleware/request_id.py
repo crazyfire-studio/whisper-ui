@@ -99,6 +99,21 @@ def _client_ip(request: Request) -> str:
     return client.host if client is not None else "-"
 
 
+def loggable_path(path: str) -> str:
+    """Return ``path`` with a share token masked to its last four characters.
+
+    A /shared/<token> path is a bearer credential: anyone holding the URL can
+    read the transcript, so the full token must not land in the logs.
+    """
+    if not path.startswith(_SHARED_PREFIX):
+        return path
+    token, sep, rest = path[len(_SHARED_PREFIX) :].partition("/")
+    return f"{_SHARED_PREFIX}****{token[-4:]}{sep}{rest}"
+
+
+_SHARED_PREFIX = "/shared/"
+
+
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Bind a per-request correlation id and emit a structured access log."""
 
@@ -108,6 +123,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         request_id = _normalise_request_id(request.headers.get(REQUEST_ID_HEADER))
         tokens = set_request_context(request_id=request_id, user_id="-")
+        # Also on request.state: the contextvar is reset in the finally below,
+        # before the app's 500 handler (in ServerErrorMiddleware, outside this
+        # middleware) runs, and that handler shares this request's scope.
+        request.state.request_id = request_id
         start_ns = time.perf_counter_ns()
         status_code: int = _UNCAUGHT_STATUS_SENTINEL
         try:
@@ -134,7 +153,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             _access_logger.info(
                 "method=%s path=%s status=%s duration_ms=%s ip=%s",
                 request.method,
-                request.url.path,
+                loggable_path(request.url.path),
                 status_code,
                 duration_ms,
                 _client_ip(request),
