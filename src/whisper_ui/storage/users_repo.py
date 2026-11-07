@@ -70,10 +70,33 @@ def _row_to_user(row: sqlite3.Row) -> User:
     )
 
 
+def hash_password(password: str) -> str:
+    """Return the argon2 hash of ``password``.
+
+    It takes tens of milliseconds of CPU, so a request handler runs it with
+    ``asyncio.to_thread`` and passes the result to ``insert_user`` or
+    ``store_password_hash``, whose writes stay on the event loop with the
+    shared connection.
+    """
+    return _hasher.hash(password)
+
+
 def create_user(
     conn: sqlite3.Connection,
     username: str,
     password: str,
+    *,
+    is_admin: bool = False,
+    is_active: bool = True,
+) -> User:
+    """Hash ``password`` and insert the user; see ``insert_user``."""
+    return insert_user(conn, username, hash_password(password), is_admin=is_admin, is_active=is_active)
+
+
+def insert_user(
+    conn: sqlite3.Connection,
+    username: str,
+    password_hash: str,
     *,
     is_admin: bool = False,
     is_active: bool = True,
@@ -88,7 +111,6 @@ def create_user(
     responsibility — this function trusts internal callers.
     """
     now = _now()
-    password_hash = _hasher.hash(password)
     cur = conn.execute(
         "INSERT INTO users "
         "(username, password_hash, is_admin, is_active, session_version, created_at, updated_at) "
@@ -170,10 +192,14 @@ def dummy_verify(password: str) -> None:
 
 
 def set_password(conn: sqlite3.Connection, user_id: int, new_password: str) -> None:
+    """Hash ``new_password`` and store it; see ``store_password_hash``."""
+    store_password_hash(conn, user_id, hash_password(new_password))
+
+
+def store_password_hash(conn: sqlite3.Connection, user_id: int, new_hash: str) -> None:
     """Replace a user's password hash and bump session_version to invalidate
     every existing session on that account.
     """
-    new_hash = _hasher.hash(new_password)
     conn.execute(
         "UPDATE users SET password_hash = ?, session_version = session_version + 1, updated_at = ? WHERE id = ?",
         (new_hash, _now(), user_id),

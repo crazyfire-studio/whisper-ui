@@ -240,3 +240,14 @@ def test_set_active_missing_user_raises(conn):
 def test_set_admin_missing_user_raises(conn):
     with pytest.raises(ValueError, match="not found"):
         users_repo.set_admin(conn, 9999, admin=True)
+
+
+def test_insert_user_and_store_password_hash_take_a_precomputed_hash(conn):
+    # The route layer hashes in a worker thread and writes on the event loop.
+    user = users_repo.insert_user(conn, "carol", users_repo.hash_password("first-password"))
+    assert users_repo.verify_password(user, "first-password") is True
+
+    users_repo.store_password_hash(conn, user.id, users_repo.hash_password("second-password"))
+    updated = users_repo.get_user_by_id(conn, user.id)
+    assert users_repo.verify_password(updated, "second-password") is True
+    assert updated.session_version == user.session_version + 1

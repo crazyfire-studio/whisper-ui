@@ -474,29 +474,24 @@ class JobDatabase:
         self._conn.commit()
         return cursor.rowcount == 1
 
-    def list_terminal_job_ids_older_than(
-        self,
-        threshold_iso: str,
-        *,
-        statuses: tuple[str, ...] = (JobStatus.COMPLETED.value,),
-    ) -> list[str]:
-        """Return ids of jobs in ``statuses`` whose updated_at < threshold.
+    def list_reclaimable_upload_job_ids(self, threshold_iso: str) -> list[str]:
+        """Return ids of jobs whose upload directory the retention sweep may remove.
 
-        Defaults to COMPLETED only because FAILED jobs are the ones a user
-        is most likely to retry — and retry currently reuses the original
-        upload path, so reclaiming a FAILED job's upload would silently
-        break the retry button. Callers that explicitly want both states
-        (e.g. an admin sweep) can opt in by passing
-        ``statuses=(JobStatus.COMPLETED.value, JobStatus.FAILED.value)``.
+        That is every COMPLETED job, and every FAILED job with a source URL,
+        whose updated_at < threshold. A FAILED upload job is kept: its retry
+        reuses the uploaded file, so reclaiming it would break the retry
+        button. A URL job's directory holds only the downloaded media, and a
+        retry downloads it again.
 
         Ordered by ``updated_at`` ascending so the oldest jobs come first
         (matching the spirit of a retention sweep) and ``id`` as a stable
         tie-breaker, which lets callers iterate deterministically across
         multiple sweeps without needing a reclaim flag column.
         """
-        placeholders = ", ".join("?" for _ in statuses)
         rows = self._conn.execute(
-            f"SELECT id FROM jobs WHERE status IN ({placeholders}) AND updated_at < ? ORDER BY updated_at ASC, id ASC",
-            (*statuses, threshold_iso),
+            "SELECT id FROM jobs WHERE updated_at < ? AND (status = ? OR "
+            "(status = ? AND source_url IS NOT NULL AND source_url != '')) "
+            "ORDER BY updated_at ASC, id ASC",
+            (threshold_iso, JobStatus.COMPLETED.value, JobStatus.FAILED.value),
         ).fetchall()
         return [row["id"] for row in rows]

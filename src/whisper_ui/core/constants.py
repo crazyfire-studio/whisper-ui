@@ -151,6 +151,11 @@ YT_DLP_VIDEO_FORMAT = (
 # REDIS_PROCESSING_EXPIRY now lives in Settings.redis_processing_expiry.
 REDIS_COMPLETED_EXPIRY = 86400  # 24 hours
 REDIS_FAILED_EXPIRY = 86400  # 24 hours
+# How long RQ keeps a failed sub-job (its args and traceback) in the failed
+# registry. RQ's default is a year, and the Redis here runs with noeviction;
+# the job row in SQLite already records the failure, and finalize_failure logs
+# the raw exception, so a week is enough to inspect one by hand.
+RQ_FAILURE_TTL_SECONDS = 604_800  # 7 days
 
 # Pipeline TTLs at a glance (three layers, longest to shortest):
 #   PIPELINE_STATE_TTL_SECONDS (here, 7d)

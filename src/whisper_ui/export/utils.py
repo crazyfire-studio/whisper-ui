@@ -24,11 +24,14 @@ def format_timestamp(seconds: float, ms_separator: str = ",") -> str:
     # and any downstream subtitle parser. The normal pipeline emits only
     # non-negative offsets, so this just hardens against a degenerate segment,
     # matching the defensive posture of the sibling cue-text helpers.
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
+    #
+    # Round to whole milliseconds first, then split with integer arithmetic:
+    # truncating the float fraction turned 1.001 (stored as 1.00099...) into
+    # ",000" -- about half of all millisecond values came out 1 ms early.
+    total_ms = round(max(0.0, seconds) * 1000)
+    h, rest = divmod(total_ms, 3_600_000)
+    m, rest = divmod(rest, 60_000)
+    s, ms = divmod(rest, 1000)
     return f"{h:02d}:{m:02d}:{s:02d}{ms_separator}{ms:03d}"
 
 

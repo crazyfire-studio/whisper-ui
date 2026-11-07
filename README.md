@@ -486,10 +486,11 @@ server, or split Whisper and Ollama onto separate GPUs as above.
 
 Long-running deployments accumulate per-job upload directories under
 `data/uploads/`. Set `UPLOAD_RETENTION_DAYS` to have the web app
-hourly reclaim the upload directory of any **COMPLETED** job whose
-last update is older than the threshold. FAILED jobs are intentionally
-preserved so the retry button keeps working — retry reuses the
-original upload path and would otherwise fail at the preprocess step.
+hourly reclaim the upload directory of any **COMPLETED** job, and of any
+**FAILED URL** job, whose last update is older than the threshold. A FAILED
+upload job is intentionally preserved so the retry button keeps working —
+retry reuses the original upload path and would otherwise fail at the
+preprocess step. A URL job's retry downloads the media again.
 
 The DB row and the saved transcript (`data/outputs/<id>/result.json`)
 are always kept, so viewer and export routes remain functional. The
@@ -503,9 +504,9 @@ UPLOAD_RETENTION_DAYS=30
 docker compose --profile gpu up -d
 ```
 
-| Variable                | Default | Description                                                                                                          |
-| ----------------------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
-| `UPLOAD_RETENTION_DAYS` | `0`     | `0` disables the sweep (legacy behaviour). `>0` reclaims COMPLETED job upload dirs older than that many days hourly. |
+| Variable                | Default | Description                                                                                                                         |
+| ----------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `UPLOAD_RETENTION_DAYS` | `0`     | `0` disables the sweep (legacy behaviour). `>0` reclaims COMPLETED and FAILED URL job upload dirs older than that many days hourly. |
 
 ### Logging and request tracing
 
@@ -565,12 +566,12 @@ same posture as `/health`, so keep it internal. Set `METRICS_TOKEN` to require
 you do. They are computed at scrape time from RQ/Redis and the SQLite `jobs`
 table, with no persistent counters:
 
-| Metric                                         | Type  | Labels   | Source             |
-| ---------------------------------------------- | ----- | -------- | ------------------ |
-| `whisper_jobs_total`                           | gauge | `status` | SQLite `jobs`      |
-| `whisper_queue_depth`                          | gauge | `queue`  | RQ queue length    |
-| `whisper_failed_jobs` / `whisper_started_jobs` | gauge | `queue`  | RQ registries      |
-| `whisper_rq_workers`                           | gauge | —        | RQ worker registry |
+| Metric                                         | Type  | Labels   | Source                                              |
+| ---------------------------------------------- | ----- | -------- | --------------------------------------------------- |
+| `whisper_jobs_total`                           | gauge | `status` | SQLite `jobs`                                       |
+| `whisper_queue_depth`                          | gauge | `queue`  | RQ queue length                                     |
+| `whisper_failed_jobs` / `whisper_started_jobs` | gauge | `queue`  | RQ registries (failed sub-jobs expire after 7 days) |
+| `whisper_rq_workers`                           | gauge | —        | RQ worker registry                                  |
 
 A Redis blip degrades the scrape to the SQLite-only metrics rather than failing
 it. Per-stage latency is intentionally **not** a metric here (workers have no

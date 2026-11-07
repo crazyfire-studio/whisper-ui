@@ -145,7 +145,7 @@ def _run_retention_sweep(db_path, filestore, threshold_iso: str, limit: int) -> 
     from whisper_ui.storage.database import JobDatabase
 
     with closing(JobDatabase(db_path)) as db:
-        ids = db.list_terminal_job_ids_older_than(threshold_iso)
+        ids = db.list_reclaimable_upload_job_ids(threshold_iso)
     removed = 0
     for jid in ids:
         if removed >= limit:

@@ -25,6 +25,7 @@ the data scope differs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 from typing import Annotated
@@ -120,8 +121,9 @@ async def admin_create_user(
     if len(password) < MIN_PASSWORD_LENGTH:
         return _admin_redirect(error="password_short")
 
+    password_hash = await asyncio.to_thread(users_repo.hash_password, password)
     try:
-        users_repo.create_user(db.conn, username=username, password=password, is_admin=is_admin)
+        users_repo.insert_user(db.conn, username=username, password_hash=password_hash, is_admin=is_admin)
     except sqlite3.IntegrityError:
         return _admin_redirect(error="username_taken")
 
@@ -207,7 +209,8 @@ async def admin_reset_password(
     target = users_repo.get_user_by_id(db.conn, user_id)
     if target is None:
         return _admin_redirect(error="user_not_found")
-    users_repo.set_password(db.conn, user_id, new_password)
+    new_hash = await asyncio.to_thread(users_repo.hash_password, new_password)
+    users_repo.store_password_hash(db.conn, user_id, new_hash)
     if user_id == admin.id:
         logger.warning(
             "admin %r reset OWN password — session invalidated, re-login required",
