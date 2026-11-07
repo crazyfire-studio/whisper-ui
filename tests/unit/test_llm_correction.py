@@ -489,6 +489,10 @@ def test_typo_level_corrections_are_plausible(original, corrected):
         ("To do this it's like something you must do", "做這件事是你必須要做的事，因為我們正在畢業"),
         # Byte-fallback tokens in place of a character (observed with gemma4:26b and 31b).
         ("昆蟲學家們用蟲字一詞", "昆蟲學家們用蟲<0xE7><0x98><0xBF>一詞"),
+        # Text added to an empty or whitespace-only segment, short enough to
+        # pass the size bounds on their own.
+        ("", "新增文字"),
+        ("   ", "新增"),
     ],
 )
 def test_rewrites_and_garbage_are_implausible(original, corrected):

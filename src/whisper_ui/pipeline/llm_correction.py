@@ -303,8 +303,11 @@ class LLMCorrectionStage:
 
 def _is_plausible_correction(original: str, corrected: str) -> bool:
     """Return whether ``corrected`` stays within what a typo fix can change."""
-    if not corrected.strip():
-        return not original.strip()
+    # An empty segment has nothing to fix, so any text in its place is added
+    # content. The size bounds below cannot catch short additions there: with a
+    # zero-length original they fall back to _MIN_ALLOWED_CHANGE.
+    if not original.strip() or not corrected.strip():
+        return not original.strip() and not corrected.strip()
     if _BYTE_TOKEN.search(corrected) and not _BYTE_TOKEN.search(original):
         return False
     length = len(original)
