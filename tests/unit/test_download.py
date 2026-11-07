@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from whisper_ui.core.constants import YT_DLP_MAX_HEIGHT
+from whisper_ui.core.constants import GDRIVE_SOCKET_TIMEOUT, YT_DLP_MAX_HEIGHT
 from whisper_ui.core.exceptions import DownloadError
 from whisper_ui.core.ytdlp_logging import YtDlpLogger
 from whisper_ui.pipeline.download import _MAX_DOWNLOAD_ATTEMPTS, DownloadStage
@@ -581,7 +581,7 @@ class TestGoogleDriveDownload:
     def test_successful_gdrive_download(self, context, download_dir):
         resolved_file = str(download_dir / "meeting_recording.m4a")
 
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output)
             if out_path.is_dir():
                 out_path = out_path / "meeting_recording.m4a"
@@ -599,7 +599,7 @@ class TestGoogleDriveDownload:
         assert result["video_title"] == "meeting_recording"
 
     def test_gdrive_progress_callback(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"fake audio content")
             return str(out_path)
@@ -663,7 +663,7 @@ class TestGoogleDriveDownload:
                 stage.execute(context)
 
     def test_gdrive_empty_file_raises(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"")
             return str(out_path)
@@ -679,7 +679,7 @@ class TestGoogleDriveDownload:
     def test_gdrive_file_exceeding_size_cap_raises_and_deletes(self, context, download_dir):
         # Drive files carry no duration metadata, so the byte cap is the only
         # guard against an oversized file filling the disk.
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -696,7 +696,7 @@ class TestGoogleDriveDownload:
     def test_gdrive_size_cap_message_uses_fractional_megabytes(self, context, download_dir):
         # Integer division understated both numbers (a sub-MB file read
         # "0 MB"); the message must carry one decimal place.
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * int(1.5 * 1024 * 1024))
             return str(out_path)
@@ -710,7 +710,7 @@ class TestGoogleDriveDownload:
                 stage.execute(context)
 
     def test_gdrive_file_within_size_cap_succeeds(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -725,7 +725,7 @@ class TestGoogleDriveDownload:
         assert result["input_path"] == str(download_dir / "audio.mp3")
 
     def test_gdrive_size_cap_disabled_by_default(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "audio.mp3"
             out_path.write_bytes(b"x" * 100)
             return str(out_path)
@@ -739,8 +739,67 @@ class TestGoogleDriveDownload:
 
         assert result["input_path"] == str(download_dir / "audio.mp3")
 
+    @staticmethod
+    def _chunked_gdown(name: str, payload: bytes, *, declare_length: bool, chunk: int = 10) -> tuple[MagicMock, list]:
+        """A gdown stand-in that, like gdown 6.4, writes <name>.part chunk by
+        chunk, calls ``progress`` after each write, and publishes on success."""
+        calls: list[dict[str, Any]] = []
+
+        def download(url, output, **kwargs):
+            calls.append(kwargs)
+            partial = Path(output) / f"{name}.part"
+            total = len(payload) if declare_length else None
+            with partial.open("wb") as fh:
+                for i in range(0, len(payload), chunk):
+                    fh.write(payload[i : i + chunk])
+                    kwargs["progress"](min(i + chunk, len(payload)), total)
+            final = Path(output) / name
+            partial.rename(final)
+            return str(final)
+
+        mock_gdown = MagicMock()
+        mock_gdown.download = download
+        return mock_gdown, calls
+
+    def test_gdrive_declared_length_over_cap_stops_at_first_chunk(self, context, download_dir):
+        mock_gdown, _ = self._chunked_gdown("audio.mp3", b"x" * 100, declare_length=True)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            stage = DownloadStage(max_file_size=50)
+            with pytest.raises(DownloadError, match="larger than the maximum allowed"):
+                stage.execute(context)
+        assert list(download_dir.iterdir()) == []
+
+    def test_gdrive_undeclared_length_is_cut_off_past_the_cap(self, context, download_dir):
+        mock_gdown, _ = self._chunked_gdown("audio.mp3", b"x" * 100, declare_length=False)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            stage = DownloadStage(max_file_size=50)
+            with pytest.raises(DownloadError, match=r"larger than the maximum allowed \(50 bytes\)"):
+                stage.execute(context)
+        assert list(download_dir.iterdir()) == []
+
+    def test_gdrive_streamed_file_at_the_cap_succeeds(self, context, download_dir):
+        mock_gdown, calls = self._chunked_gdown("audio.mp3", b"x" * 50, declare_length=True)
+        with patch.dict("sys.modules", {"gdown": mock_gdown}):
+            result = DownloadStage(max_file_size=50).execute(context)
+        assert result["input_path"] == str(download_dir / "audio.mp3")
+        assert calls[0]["timeout"] == GDRIVE_SOCKET_TIMEOUT
+
+    def test_gdrive_failure_removes_the_partial_file(self, context, download_dir):
+        def download(url, output, **kwargs):
+            (Path(output) / "audio.mp3.part").write_bytes(b"x" * 10)
+            raise ConnectionError("reset by peer")
+
+        mock_gdown = MagicMock()
+        mock_gdown.download = download
+        with (
+            patch.dict("sys.modules", {"gdown": mock_gdown}),
+            pytest.raises(DownloadError, match="Failed to download from Google Drive"),
+        ):
+            DownloadStage().execute(context)
+        assert list(download_dir.iterdir()) == []
+
     def test_gdrive_unsupported_extension_raises(self, context, download_dir):
-        def mock_download(url, output, quiet=True):
+        def mock_download(url, output, **kwargs):
             out_path = Path(output) / "document.txt"
             out_path.write_bytes(b"some text content")
             return str(out_path)

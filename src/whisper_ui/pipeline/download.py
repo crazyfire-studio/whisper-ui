@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from rq.timeouts import BaseTimeoutException
 
 from whisper_ui.core.constants import (
+    GDRIVE_SOCKET_TIMEOUT,
     YT_DLP_FORMAT_SORT,
     YT_DLP_SOCKET_TIMEOUT,
     YT_DLP_TRANSIENT_MARKERS,
@@ -160,6 +161,14 @@ class DownloadStage:
         gdrive_url = f"https://drive.google.com/uc?id={file_id}"
         output_path = str(download_dir) + "/"
 
+        def guard_size(received: int, total: int | None) -> None:
+            # gdown calls this after writing each chunk; total is the declared
+            # Content-Length (None when absent). Raising stops the transfer, so
+            # an oversized file costs at most one chunk past the cap on disk.
+            if self._max_file_size and max(received, total or 0) > self._max_file_size:
+                raise DownloadError(f"File is larger than the maximum allowed ({_as_size(self._max_file_size)}).")
+
+        result = None
         try:
             if on_progress:
                 on_progress(0.1, DOWNLOAD_GDRIVE_IN_PROGRESS)
@@ -169,7 +178,9 @@ class DownloadStage:
             # on failure instead of returning None. The None guard stays as
             # defence; a raised failure falls through to the generic handler
             # below, whose message already echoes gdown's "share with Anyone" hint.
-            result = gdown.download(url=gdrive_url, output=output_path, quiet=True)
+            result = gdown.download(
+                url=gdrive_url, output=output_path, quiet=True, progress=guard_size, timeout=GDRIVE_SOCKET_TIMEOUT
+            )
             if result is None:
                 raise DownloadError(
                     "Failed to download from Google Drive. Make sure the file is shared as 'Anyone with the link'."
@@ -180,6 +191,13 @@ class DownloadStage:
             raise
         except Exception as e:
             raise DownloadError(f"Failed to download from Google Drive: {neutralise(str(e))}") from e
+        finally:
+            if result is None:
+                # gdown writes to <name>.part and keeps it on failure for its
+                # resume option, which this stage does not use. The directory
+                # belongs to this job alone.
+                for partial in download_dir.glob("*.part"):
+                    partial.unlink(missing_ok=True)
 
         downloaded = Path(result)
         if not downloaded.is_file() or downloaded.stat().st_size == 0:

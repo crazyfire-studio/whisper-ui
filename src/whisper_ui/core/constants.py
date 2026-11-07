@@ -58,6 +58,10 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
 
+# gdown's network timeout in seconds: a stalled Drive response then fails the
+# download instead of holding the worker until the stage's job timeout.
+GDRIVE_SOCKET_TIMEOUT = 30
+
 # Substrings (lowercase) that mark a *transient* yt-dlp failure: the source is
 # throttling or briefly down, not gone. The headline case is X throttling its
 # anonymous guest-token endpoint ("Bad guest token"), which yt-dlp re-fetches
