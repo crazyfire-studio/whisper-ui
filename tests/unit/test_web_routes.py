@@ -598,11 +598,11 @@ class TestJobsRoutes:
         assert resp.status_code == 409
         assert db.get_job(job.id) is not None
 
-    def test_retry_file_job_passes_probed_duration_to_dispatcher(self, client, db):
-        job = _create_failed_job(db)
+    def test_retry_keeps_the_jobs_known_duration(self, client, db):
+        job = Job(filename="fail.mp3", status=JobStatus.FAILED, error="test error", duration=3600.0)
+        db.insert_job(job)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=3600.0),
         ):
             resp = client.post(f"/jobs/{job.id}/retry")
         assert resp.status_code == 204
@@ -618,7 +618,6 @@ class TestJobsRoutes:
         job = _create_failed_job(db)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=None),
         ):
             first = client.post(f"/jobs/{job.id}/retry")
             second = client.post(f"/jobs/{job.id}/retry")
@@ -627,11 +626,10 @@ class TestJobsRoutes:
         assert second.status_code == 404
         mock_enqueue.assert_called_once()
 
-    def test_retry_file_job_with_unknown_duration_passes_none(self, client, db):
+    def test_retry_job_without_a_measured_duration_passes_none(self, client, db):
         job = _create_failed_job(db)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=None),
         ):
             resp = client.post(f"/jobs/{job.id}/retry")
         assert resp.status_code == 204
@@ -646,20 +644,6 @@ class TestJobsRoutes:
         # URL jobs cannot be re-probed locally; dispatcher sees duration=None.
         assert mock_enqueue.call_args[0][0].duration is None
 
-    def test_retry_probe_exception_passes_none_duration(self, client, db):
-        job = _create_failed_job(db)
-        with (
-            patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch(
-                "whisper_ui.web.routes.jobs.get_audio_duration_seconds",
-                side_effect=OSError("file vanished"),
-            ),
-        ):
-            resp = client.post(f"/jobs/{job.id}/retry")
-        assert resp.status_code == 204
-        mock_enqueue.assert_called_once()
-        assert mock_enqueue.call_args[0][0].duration is None
-
     def test_retry_enqueue_failure_uses_generic_error(self, client, db):
         job = _create_failed_job(db)
         with (
@@ -667,7 +651,6 @@ class TestJobsRoutes:
                 "whisper_ui.web.routes.jobs.enqueue_pipeline",
                 side_effect=Exception("Redis internal: secret/key/path leak"),
             ),
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=60.0),
         ):
             client.post(f"/jobs/{job.id}/retry")
         refreshed = db.get_job(job.id)
@@ -694,7 +677,6 @@ class TestJobsRoutes:
         # _create_failed_job sets error="Test failure" — verify it round-trips into the log.
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline"),
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=60.0),
             caplog.at_level(_logging.INFO, logger="whisper_ui.web.routes.jobs"),
         ):
             client.post(f"/jobs/{job.id}/retry")
@@ -703,13 +685,21 @@ class TestJobsRoutes:
         assert job.id in msg
         assert "previous_error=" in msg
 
+    def test_re_transcribe_carries_the_source_duration(self, client, db, filestore):
+        src = _completed_upload_job_with_audio(db, filestore)
+        src.duration = 1234.5
+        db.update_job(src)
+        with patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue:
+            resp = client.post(f"/jobs/{src.id}/re-transcribe", data={"language": "zh", "model_name": "large-v3"})
+        assert resp.status_code == 204
+        assert mock_enqueue.call_args[0][0].duration == 1234.5
+
     def test_re_transcribe_creates_new_version_and_preserves_original(self, client, db, filestore, app):
         # hf_token present so the diarization flag passes through un-clamped.
         app.state.settings = app.state.settings.model_copy(update={"hf_token": "hf-test-not-real"})
         src = _completed_upload_job_with_audio(db, filestore)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=42.0),
         ):
             resp = client.post(
                 f"/jobs/{src.id}/re-transcribe",
@@ -735,7 +725,6 @@ class TestJobsRoutes:
         src = _completed_upload_job_with_audio(db, filestore)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=42.0),
         ):
             resp = client.post(
                 f"/jobs/{src.id}/re-transcribe",
@@ -775,7 +764,6 @@ class TestJobsRoutes:
         src = _completed_upload_job_with_audio(db, filestore)
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=42.0),
         ):
             resp = client.post(
                 f"/jobs/{src.id}/re-transcribe",
@@ -789,7 +777,6 @@ class TestJobsRoutes:
         src = _completed_upload_job_with_audio(db, filestore, filename="meeting.mp3")
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline") as mock_enqueue,
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=42.0),
         ):
             client.post(f"/jobs/{src.id}/re-transcribe", data={"language": "zh", "model_name": "large-v3"})
 
@@ -850,7 +837,6 @@ class TestJobsRoutes:
                 "whisper_ui.web.routes.jobs.enqueue_pipeline",
                 side_effect=Exception("Redis internal: secret/key leak"),
             ),
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=42.0),
         ):
             resp = client.post(f"/jobs/{src.id}/re-transcribe", data={"language": "zh", "model_name": "large-v3"})
 
@@ -871,7 +857,6 @@ class TestJobsRoutes:
 
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline"),
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=None),
         ):
             resp = client.post("/jobs/bulk/retry", data={"job_ids": f"{failed_a.id},{failed_b.id}"})
 
@@ -2012,7 +1997,6 @@ class TestBatchRoutes:
             )
         with (
             patch("whisper_ui.web.routes.jobs.enqueue_pipeline"),
-            patch("whisper_ui.web.routes.jobs.get_audio_duration_seconds", return_value=60.0),
             caplog.at_level(_logging.INFO, logger="whisper_ui.web.routes.jobs"),
         ):
             client.post(f"/jobs/batch/{batch_id}/retry")
