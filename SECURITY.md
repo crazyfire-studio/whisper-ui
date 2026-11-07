@@ -5,7 +5,7 @@
 If you discover a security vulnerability, please report it responsibly:
 
 1. **Do not** open a public issue
-2. Email the maintainers or use [GitHub's private vulnerability reporting](https://github.com/fdff87554/whisper-ui/security/advisories/new)
+2. Email the maintainers or use [GitHub's private vulnerability reporting](https://github.com/crazyfire-studio/whisper-ui/security/advisories/new)
 3. Include steps to reproduce and the potential impact
 
 We will acknowledge receipt within 48 hours and aim to provide a fix or mitigation plan within 7 days.
@@ -38,12 +38,15 @@ deployment:
 - **Session revocation**: each user row carries a `session_version` that is
   bumped on password reset or account deactivation, invalidating any
   outstanding session cookie.
-- **Defense-in-depth headers**: `X-Content-Type-Options`, `X-Frame-Options`,
-  `Referrer-Policy` set on every response (`web/app.py`
-  `SecurityHeadersMiddleware`). CSP / HSTS are intentionally not set; CSP
-  is left to deployment-time configuration because templates load
-  htmx / Alpine.js from jsDelivr, and HSTS is owned by the upstream TLS
-  proxy.
+- **Defense-in-depth headers**: responses from the app's routes and static
+  files carry `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+  and a Content-Security-Policy (`web/app.py` `SecurityHeadersMiddleware`).
+  The CSP allows scripts from the app itself, jsDelivr (htmx / Alpine.js) and
+  inline blocks carrying the per-request nonce. Responses produced outside
+  that middleware carry less: the login redirects and CSRF rejections that
+  `AuthMiddleware` returns itself carry none of these headers, and the
+  unhandled-error 500 carries the first three but no CSP. HSTS is not set: it
+  belongs to the upstream TLS proxy.
 - **Upload hardening**: filenames stripped to basename, sizes capped via
   streamed reads, allowed extensions enumerated, output paths derived from
   job IDs (`web/routes/upload.py`, `storage/filestore.py`).

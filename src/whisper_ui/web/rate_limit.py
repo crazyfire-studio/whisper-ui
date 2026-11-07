@@ -1,4 +1,4 @@
-"""Redis-backed sliding-window rate limit for login attempts.
+"""Redis-backed fixed-window rate limit for login attempts.
 
 The limit is structured as two parallel counters per attempt: one keyed on
 the username (so credential stuffing against one account is bounded) and
@@ -8,8 +8,8 @@ across many accounts). Each counter has its own threshold
 rejects the next attempt.
 
 The window is implemented as a Redis ``INCR`` with ``EXPIRE NX``: the TTL
-is set only on first increment so the window slides forward exactly once
-per burst, not on every failed login.
+is set only on the first increment, so the window runs for a fixed period
+from the first attempt of a burst and later failures do not extend it.
 
 Keys live under ``auth:rl:`` so production operators can clear them with
 ``redis-cli DEL auth:rl:user:alice`` without touching pipeline state.

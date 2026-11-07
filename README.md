@@ -14,7 +14,7 @@ and Docker deployment (NVIDIA GPU / CPU / AMD ROCm).
 - Transcribe directly from a URL: YouTube videos and playlists, X (Twitter)
   posts, and Google Drive files are downloaded by the worker
 - Batch upload with automatic filtering of unsupported files
-- Speaker diarization with pyannote speaker-diarization-3.1 (optional)
+- Speaker diarization with pyannote speaker-diarization-community-1 (optional)
 - Optional LLM text correction via Ollama (a Gemma model, per-job toggle)
 - Real-time progress tracking via Redis
 - Export to SRT, VTT, TXT, JSON, DOCX
@@ -55,9 +55,8 @@ and Docker deployment (NVIDIA GPU / CPU / AMD ROCm).
 **Optional (for speaker diarization):**
 
 - HuggingFace token ([get one here](https://huggingface.co/settings/tokens))
-- Accept the model agreements:
-  - <https://huggingface.co/pyannote/speaker-diarization-3.1>
-  - <https://huggingface.co/pyannote/segmentation-3.0>
+- Accept the model agreement at <https://huggingface.co/pyannote/speaker-diarization-community-1> (the model whisperx 3.8.6 loads;
+  it bundles its own segmentation and embedding models)
 
 ### GPU Deployment
 
@@ -197,17 +196,18 @@ Every subsequent visit goes through `/login` or self-service `/register`.
 
 **Required env vars:**
 
-| Variable                       | Default | Description                                                                                                                                                                                                                                                       |
-| ------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SESSION_SECRET`               | (empty) | Cookie signing key. Generate once with `openssl rand -hex 32` and keep it stable. Empty value falls back to a per-process random secret (dev only).                                                                                                               |
-| `SESSION_HTTPS_ONLY`           | `false` | Set to `true` for any production deployment so the session cookie carries the `Secure` flag (otherwise it is sent in clear text on the proxy↔client hop).                                                                                                         |
-| `ALLOW_REGISTRATION`           | `true`  | When `false`, self-service `/register` is closed after the bootstrap admin exists, so only an admin can create accounts. The first admin is always creatable.                                                                                                     |
-| `MAX_LOGIN_ATTEMPTS`           | `5`     | After this many failed logins per username, the next attempt is blocked for `LOGIN_LOCKOUT_SECONDS` regardless of password correctness.                                                                                                                           |
-| `MAX_LOGIN_ATTEMPTS_PER_IP`    | `20`    | Separate, higher per-IP threshold. The default is comfortable for a small office sharing one NAT egress IP; raise it for larger NATs, or enable `TRUST_PROXY_HEADERS` so each user is rate-limited by their real address.                                         |
-| `LOGIN_LOCKOUT_SECONDS`        | `900`   | Window length for both per-user and per-IP counters.                                                                                                                                                                                                              |
-| `METRICS_TOKEN`                | (empty) | Bearer token required on `/metrics` scrapes. Empty leaves the endpoint open (counts and queue depths only, no PII). Setting it breaks the bundled Prometheus until that scrape job gets the same token — see "Observability".                                     |
-| `MAX_REGISTER_ATTEMPTS_PER_IP` | `10`    | Per-IP cap on open (non-bootstrap) registrations within `LOGIN_LOCKOUT_SECONDS`, bounding scripted account creation and username-enumeration probing. The first-run bootstrap admin is never throttled.                                                           |
-| `TRUST_PROXY_HEADERS`          | `false` | When `true`, the app uses the left-most `X-Forwarded-For` entry as the client IP (for rate-limit bucketing) and accepts `X-Forwarded-Host` as a valid CSRF host. **Only enable behind a controlled reverse proxy that resets these headers** — see warning below. |
+| Variable                       | Default | Description                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SESSION_SECRET`               | (empty) | Cookie signing key. Generate once with `openssl rand -hex 32` and keep it stable. Empty value falls back to a per-process random secret (dev only).                                                                                                                            |
+| `SESSION_HTTPS_ONLY`           | `false` | Set to `true` for any production deployment so the session cookie carries the `Secure` flag (otherwise it is sent in clear text on the proxy↔client hop).                                                                                                                      |
+| `ALLOW_REGISTRATION`           | `true`  | When `false`, self-service `/register` is closed after the bootstrap admin exists, so only an admin can create accounts. The first admin is always creatable.                                                                                                                  |
+| `MAX_LOGIN_ATTEMPTS`           | `5`     | After this many failed logins per username, the next attempt is blocked for `LOGIN_LOCKOUT_SECONDS` regardless of password correctness.                                                                                                                                        |
+| `MAX_LOGIN_ATTEMPTS_PER_IP`    | `20`    | Separate, higher per-IP threshold. The default is comfortable for a small office sharing one NAT egress IP; raise it for larger NATs, or enable `TRUST_PROXY_HEADERS` so each user is rate-limited by their real address.                                                      |
+| `LOGIN_LOCKOUT_SECONDS`        | `900`   | Window length for both per-user and per-IP counters.                                                                                                                                                                                                                           |
+| `METRICS_TOKEN`                | (empty) | Bearer token required on `/metrics` scrapes. Empty leaves the endpoint open (counts and queue depths only, no PII). Setting it breaks the bundled Prometheus until that scrape job gets the same token — see "Observability".                                                  |
+| `MAX_REGISTER_ATTEMPTS_PER_IP` | `10`    | Per-IP cap on open (non-bootstrap) registrations within `LOGIN_LOCKOUT_SECONDS`, bounding scripted account creation and username-enumeration probing. The first-run bootstrap admin is never throttled.                                                                        |
+| `TRUST_PROXY_HEADERS`          | `false` | When `true`, the app takes the client IP (for rate-limit bucketing) from `X-Forwarded-For`, counting `TRUSTED_PROXY_COUNT` entries from the right, and accepts `X-Forwarded-Host` as a valid CSRF host. **Only enable behind a controlled reverse proxy** — see warning below. |
+| `TRUSTED_PROXY_COUNT`          | `1`     | Number of reverse proxies in front of the app. With `TRUST_PROXY_HEADERS=true` the client IP is the Nth `X-Forwarded-For` entry from the right; entries further left are client-controlled and ignored.                                                                        |
 
 **Roles:** every account is either a regular user or an admin. Admins
 gain access to `/admin/users` (create / deactivate / promote / reset
@@ -229,12 +229,13 @@ transcript view, export — are identical for both roles.
   `Referer`) against `request.url.netloc`. The reverse proxy must
   preserve the original `Host` header (nginx: `proxy_set_header Host
 $host;`); Traefik does this by default.
-- **Reverse-proxy hardening**: if `TRUST_PROXY_HEADERS=true`, the proxy
-  **must** strip any client-supplied `X-Forwarded-For` and
-  `X-Forwarded-Host` and set them itself — otherwise a hostile client
-  can spoof its IP and the host name to defeat both rate-limit and
-  CSRF protections. nginx example: `proxy_set_header X-Forwarded-For
-$remote_addr;` (overrides any client-sent header).
+- **Reverse-proxy hardening**: if `TRUST_PROXY_HEADERS=true`, set
+  `TRUSTED_PROXY_COUNT` to the number of proxies in front of the app. Each
+  proxy must append the address it received the request from to
+  `X-Forwarded-For` (nginx: `proxy_set_header X-Forwarded-For
+$proxy_add_x_forwarded_for;`), and the outermost one must set
+  `X-Forwarded-Host` itself rather than pass on a client-supplied value —
+  otherwise a hostile client can spoof the host name to defeat the CSRF check.
 - Existing jobs from pre-auth deployments are stored with `owner_id IS NULL`
   and remain visible only on the admin `/admin/jobs` view.
 
@@ -313,21 +314,6 @@ provision more than one GPU worker. Example with two cards:
 docker compose --profile gpu up -d --scale worker-gpu=2
 # Or run named services and set WORKER_GPU_DEVICE_ID per container.
 ```
-
-**Upgrading from v1.x to v2.0 (BREAKING).** The legacy single-task
-`process_transcription` entry point has been removed in v2.0. Any RQ
-sub-jobs enqueued under it from a v1.x worker will fail import when a
-v2.0 worker picks them up. To upgrade:
-
-1. Stop accepting new uploads (e.g. take the frontend offline) or wait
-   for the dashboard to show no active jobs.
-2. Let the existing workers drain whatever is in flight.
-3. Pull the v2.0 images and `docker compose --profile gpu up -d`.
-
-If a queue is non-empty when the worker is upgraded, drop the queues
-manually before restart: `redis-cli -n 0 FLUSHDB` against the
-`REDIS_URL` Redis only clears RQ state (uploads, the SQLite DB, and
-saved transcripts are untouched).
 
 ### GPU worker resource lifecycle (advanced)
 
@@ -443,19 +429,10 @@ docker compose --profile gpu up -d
 the bundled Ollama container to `OLLAMA_GPU_DEVICE_ID` (default 1).
 Override either variable in `.env` if your topology differs.
 
-> **Operational breaking change (multi-GPU hosts only):** this release
-> switches `worker-gpu`'s GPU reservation from `count: 1` (runtime picks
-> any available GPU) to `device_ids: ["${WORKER_GPU_DEVICE_ID:-0}"]`
-> (pinned to GPU 0 by default). This is required so the `llm` profile can
-> reliably split Whisper and Ollama onto different devices. Impact:
->
-> - **Single-GPU hosts:** no change.
-> - **Multi-GPU hosts using only the `gpu` profile (no `llm`):** the
->   worker now always uses GPU 0 unless you set `WORKER_GPU_DEVICE_ID`
->   explicitly. If you previously relied on the NVIDIA runtime's
->   automatic selection (e.g. to route workloads away from a GPU already
->   held by another container), set `WORKER_GPU_DEVICE_ID` in your `.env`
->   to restore the intended placement.
+> **Multi-GPU hosts:** `worker-gpu` reserves the card in
+> `WORKER_GPU_DEVICE_ID` (`device_ids`, GPU 0 by default) rather than any free
+> GPU, so the `llm` profile can keep Whisper and Ollama on different devices.
+> Set `WORKER_GPU_DEVICE_ID` in `.env` to place the worker on another card.
 
 **Model size vs VRAM:** the default `gemma4:e4b` is ~9.6 GB and wants a 10 GB+
 GPU to stay resident. On an 8 GB or shared GPU (e.g. running Whisper on the same
@@ -685,9 +662,8 @@ ui               <- worker <- web
 ### Speaker diarization not working
 
 - Ensure `HF_TOKEN` is set in your `.env` file
-- Accept **both** model agreements on HuggingFace:
-  - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
-  - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+- Accept the model agreement on HuggingFace:
+  [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
 - Diarization is optional; transcription works without it
 
 ### CPU run logs a compute type warning

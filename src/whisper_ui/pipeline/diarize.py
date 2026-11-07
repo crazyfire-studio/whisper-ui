@@ -130,9 +130,8 @@ class DiarizeStage:
             if "401" in error_str or "Unauthorized" in error_str:
                 raise DiarizationError(
                     f"Diarization failed (authorization error): {e}. "
-                    "Please verify your HF_TOKEN and accept the model agreements at: "
-                    "https://huggingface.co/pyannote/speaker-diarization-3.1 and "
-                    "https://huggingface.co/pyannote/segmentation-3.0"
+                    "Please verify your HF_TOKEN and accept the model agreement at: "
+                    "https://huggingface.co/pyannote/speaker-diarization-community-1"
                 ) from e
             raise DiarizationError(f"Diarization failed: {e}") from e
 
