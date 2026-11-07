@@ -262,7 +262,10 @@ def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
     setup_logging(log_level=settings.log_level, log_json=settings.log_json)
-    application = FastAPI(title="Whisper UI", lifespan=lifespan)
+    # No /docs, /redoc or /openapi.json: the app serves HTML for a browser,
+    # and the schema would list every route, form field and parameter to any
+    # signed-in user (registration is open by default).
+    application = FastAPI(title="Whisper UI", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     # bootstrap_done flips True after the first active admin is observed.
     # Initialised here (not in lifespan) so AuthMiddleware can read it
     # before the first request completes even on a fresh process.

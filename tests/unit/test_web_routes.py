@@ -145,6 +145,12 @@ class TestSecurityHeaders:
         assert missing == [], f"templates reference hosts not allowed by the CSP: {missing}"
 
 
+class TestApiSchemaAndErrors:
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_api_schema_pages_are_not_served(self, client, path):
+        assert client.get(path).status_code == 404
+
+
 class TestMetricsEndpoint:
     def test_metrics_returns_prometheus_exposition(self, client):
         # app fixture uses a MagicMock redis, so the RQ gauges degrade out; the
