@@ -193,17 +193,36 @@ def collapse_control_chars(text: str) -> str:
     return "".join(" " if unicodedata.category(ch).startswith("C") or ch in _LINE_SEPARATORS else ch for ch in text)
 
 
+# Prefix of every traceback / stack line in the text format. A record starts at
+# column 0 with its timestamp, so a line that starts with this cannot pass for
+# one, whatever an exception message put after a newline.
+_CONTINUATION_PREFIX = "    "
+
+
 class TextFormatter(logging.Formatter):
     """The human-readable format, with control characters collapsed.
 
-    Request paths, filenames and remote error text reach log messages, and a
-    newline in any of them (``%0A`` in a URL path decodes to one) would start a
-    forged line. Only the formatted line is collapsed: ``format()`` appends a
-    traceback afterwards, and its line breaks are real.
+    Request paths, filenames, usernames and remote error text reach log
+    messages. A line break or other control character in any of them could
+    start a forged record or drive a terminal reading the log.
+
+    The record line is collapsed whole. A traceback or stack keeps its line
+    breaks, since they are real, but each of its lines is collapsed and
+    indented by ``_CONTINUATION_PREFIX``. An exception message is part of the
+    traceback, and a newline inside it would otherwise start a line at column 0
+    that reads as a new record.
     """
 
     def formatMessage(self, record: logging.LogRecord) -> str:
         return collapse_control_chars(super().formatMessage(record))
+
+    def format(self, record: logging.LogRecord) -> str:
+        # formatMessage leaves no line break in the record line, so the first
+        # one is where format() appended the traceback and/or stack.
+        line, sep, rest = super().format(record).partition("\n")
+        if not sep:
+            return line
+        return line + "\n" + "\n".join(_CONTINUATION_PREFIX + collapse_control_chars(part) for part in rest.split("\n"))
 
 
 class JsonFormatter(logging.Formatter):

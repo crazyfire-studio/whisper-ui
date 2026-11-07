@@ -340,7 +340,7 @@ def test_text_log_line_cannot_be_split_by_logged_values(monkeypatch, capsys):
     assert lines[0].endswith("path=/x 2026-01-01T00:00:00+0000 ERROR forged")
 
 
-def test_text_traceback_keeps_its_line_breaks(monkeypatch, capsys):
+def test_text_traceback_keeps_its_line_breaks_indented(monkeypatch, capsys):
     monkeypatch.delenv("LOG_JSON", raising=False)
     setup_logging()
 
@@ -349,9 +349,39 @@ def test_text_traceback_keeps_its_line_breaks(monkeypatch, capsys):
     except ValueError:
         logging.getLogger("whisper_ui.test").exception("failed")
 
+    lines = capsys.readouterr().err.splitlines()
+    assert "    Traceback (most recent call last):" in lines
+    assert "    ValueError: boom" in lines
+    assert lines[0].endswith("failed")
+
+
+def test_exception_message_cannot_forge_a_record_or_reach_the_terminal(monkeypatch, capsys):
+    monkeypatch.delenv("LOG_JSON", raising=False)
+    setup_logging()
+
+    try:
+        raise ValueError("bad\x1b[31m\u202eevil\n2026-01-01T00:00:00+0000 ERROR whisper_ui forged")
+    except ValueError:
+        logging.getLogger("whisper_ui.test").exception("failed")
+
     err = capsys.readouterr().err
-    assert "Traceback (most recent call last):" in err.splitlines()
-    assert "ValueError: boom" in err.splitlines()
+    lines = err.splitlines()
+    assert "\x1b" not in err and "\u202e" not in err
+    # Only the real record starts at column 0; the forged text is an indented
+    # continuation of the traceback.
+    assert [line for line in lines if not line.startswith(" ")] == [lines[0]]
+    assert "    2026-01-01T00:00:00+0000 ERROR whisper_ui forged" in lines
+
+
+def test_stack_info_lines_are_indented(monkeypatch, capsys):
+    monkeypatch.delenv("LOG_JSON", raising=False)
+    setup_logging()
+
+    logging.getLogger("whisper_ui.test").info("with stack", stack_info=True)
+
+    lines = capsys.readouterr().err.splitlines()
+    assert lines[1] == "    Stack (most recent call last):"
+    assert all(line.startswith("    ") for line in lines[1:])
 
 
 def test_json_line_cannot_be_split_by_unicode_line_separators(monkeypatch, capsys):
