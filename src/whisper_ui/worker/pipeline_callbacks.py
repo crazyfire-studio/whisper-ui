@@ -22,6 +22,7 @@ from whisper_ui.core.exceptions import (
     AlignmentError,
     DiarizationError,
     DownloadError,
+    PipelineError,
     PreprocessError,
     TranscriptionError,
 )
@@ -92,9 +93,11 @@ def is_stale_callback(current_generation: int | None, meta_generation: int | Non
 def format_failure_message(exc_type, exc_value) -> str:
     """Turn an RQ on_failure exception triple into the *user-facing* error.
 
-    RQ timeouts route through ``JOBS_TIMEOUT_ERROR``; every other failure maps to
-    a generic per-stage message (see ``_STAGE_FAILURE_MESSAGES``), falling back
-    to the generic label. Raw ``str(exc_value)`` — which can carry ffmpeg /
+    RQ timeouts route through ``JOBS_TIMEOUT_ERROR``. A ``PipelineError`` raised
+    with a ``user_message`` shows that message (a fixed, display-safe text such
+    as "the Drive file is not shared"). Every other failure maps to a generic
+    per-stage message (see ``_STAGE_FAILURE_MESSAGES``), falling back to the
+    generic label. Raw ``str(exc_value)`` — which can carry ffmpeg /
     whisper-cli stderr and internal filesystem paths — is deliberately NOT
     returned here so it never reaches the UI; operators get it from the
     server-side log in ``finalize_failure`` instead.
@@ -106,6 +109,8 @@ def format_failure_message(exc_type, exc_value) -> str:
     if exc_type is not None and isinstance(exc_type, type) and issubclass(exc_type, BaseTimeoutException):
         seconds = extract_rq_timeout_seconds(exc_value) if exc_value is not None else "?"
         return JOBS_TIMEOUT_ERROR.format(seconds=seconds)
+    if isinstance(exc_value, PipelineError) and exc_value.user_message:
+        return exc_value.user_message
     if exc_type is not None and isinstance(exc_type, type):
         for exc_cls, message in _STAGE_FAILURE_MESSAGES.items():
             if issubclass(exc_type, exc_cls):
