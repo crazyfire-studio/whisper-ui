@@ -562,12 +562,12 @@ same posture as `/health`, so keep it internal. Set `METRICS_TOKEN` to require
 you do. They are computed at scrape time from RQ/Redis and the SQLite `jobs`
 table, with no persistent counters:
 
-| Metric                                         | Type  | Labels   | Source             |
-| ---------------------------------------------- | ----- | -------- | ------------------ |
-| `whisper_jobs_total`                           | gauge | `status` | SQLite `jobs`      |
-| `whisper_queue_depth`                          | gauge | `queue`  | RQ queue length    |
-| `whisper_failed_jobs` / `whisper_started_jobs` | gauge | `queue`  | RQ registries      |
-| `whisper_rq_workers`                           | gauge | —        | RQ worker registry |
+| Metric                                         | Type  | Labels   | Source                                              |
+| ---------------------------------------------- | ----- | -------- | --------------------------------------------------- |
+| `whisper_jobs_total`                           | gauge | `status` | SQLite `jobs`                                       |
+| `whisper_queue_depth`                          | gauge | `queue`  | RQ queue length                                     |
+| `whisper_failed_jobs` / `whisper_started_jobs` | gauge | `queue`  | RQ registries (failed sub-jobs expire after 7 days) |
+| `whisper_rq_workers`                           | gauge | —        | RQ worker registry                                  |
 
 A Redis blip degrades the scrape to the SQLite-only metrics rather than failing
 it. Per-stage latency is intentionally **not** a metric here (workers have no
