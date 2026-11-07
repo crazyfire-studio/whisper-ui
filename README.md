@@ -63,7 +63,8 @@ and Docker deployment (NVIDIA GPU / CPU / AMD ROCm).
 
 ```bash
 cp .env.example .env
-# Edit .env: set HF_TOKEN if you need speaker diarization
+# Edit .env: set REDIS_PASSWORD (required, e.g. `openssl rand -hex 32`)
+# and HF_TOKEN if you need speaker diarization
 
 docker compose --profile gpu up -d
 ```
@@ -72,7 +73,8 @@ docker compose --profile gpu up -d
 
 ```bash
 cp .env.example .env
-# Edit .env: uncomment and set WHISPER_MODEL=base
+# Edit .env: set REDIS_PASSWORD (required, e.g. `openssl rand -hex 32`)
+# and uncomment and set WHISPER_MODEL=base
 # (smaller models like 'base' or 'small' are recommended for CPU)
 
 docker compose --profile cpu up -d
@@ -87,7 +89,8 @@ whisper.cpp instead and selects it automatically (`TRANSCRIBE_BACKEND=whispercpp
 
 ```bash
 cp .env.example .env
-# Set HF_TOKEN if you need speaker diarization.
+# Set REDIS_PASSWORD (required, e.g. `openssl rand -hex 32`), and HF_TOKEN if
+# you need speaker diarization.
 # Match the device-passthrough groups to your host: getent group video render
 #   VIDEO_GID / RENDER_GID  (defaults 44 / 993 suit a Strix Halo box)
 # For a non-gfx1151 GPU, build whisper.cpp for it: AMDGPU_TARGETS=gfx1100
@@ -117,11 +120,10 @@ Settings specific to this backend:
 
 Open <http://localhost:8080> in your browser.
 
-> **Production note:** the bundled Redis starts without authentication
-> when `REDIS_PASSWORD` is unset — compose always passes
-> `--requirepass "${REDIS_PASSWORD:-}"`, and an empty password means no auth.
-> For any deployment reachable beyond the local Docker network — even on a
-> trusted LAN — set `REDIS_PASSWORD` in `.env` before bringing the stack up.
+> **`REDIS_PASSWORD` is required.** Every `docker compose` command stops with
+> `set REDIS_PASSWORD in .env` until it is set. The bundled Redis holds pickled
+> RQ jobs, so an unauthenticated Redis lets anyone who reaches it run code in
+> the workers. Changing the password later only needs `docker compose up -d`.
 
 ### Pre-built Images
 
@@ -696,6 +698,8 @@ ui               <- worker <- web
 ### Redis connection error
 
 - Ensure Redis is running: `docker compose ps`
+- `required variable REDIS_PASSWORD is missing a value`: set `REDIS_PASSWORD`
+  in `.env` (see the Quick Start)
 - For local development, start Redis: `docker run -d -p 6379:6379 redis:7-alpine`
 
 ### Docker build is slow

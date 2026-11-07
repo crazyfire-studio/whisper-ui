@@ -63,6 +63,10 @@ QUALITY_GATE_REPEAT_RATIO = 0.5
 # yt-dlp
 YT_DLP_SOCKET_TIMEOUT = 30
 
+# gdown's network timeout in seconds: a stalled Drive response then fails the
+# download instead of holding the worker until the stage's job timeout.
+GDRIVE_SOCKET_TIMEOUT = 30
+
 # Substrings (lowercase) that mark a *transient* yt-dlp failure: the source is
 # throttling or briefly down, not gone. The headline case is X throttling its
 # anonymous guest-token endpoint ("Bad guest token"), which yt-dlp re-fetches
@@ -94,7 +98,7 @@ YT_DLP_TRANSIENT_MARKERS = (
 # yt-dlp without re-reading its error strings is how a heuristic like this
 # rots unnoticed, so test_markers_are_bound_to_the_installed_yt_dlp fails until
 # someone re-checks and moves this forward in the same commit.
-YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.10.21"
+YT_DLP_MARKERS_VERIFIED_AGAINST = "2026.10.26"
 
 # Ceiling on the downloaded video track's height. The pipeline only needs the
 # audio; the video track is kept so the viewer can play back the original
