@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Deploy notes
+
+- **BREAKING: `REDIS_PASSWORD` is required.** Every `docker compose` command
+  now stops with `set REDIS_PASSWORD in .env` until it is set. Before
+  upgrading, add one to `.env` (`openssl rand -hex 32`); a deployment that
+  already sets it needs no change. The bundled Redis holds pickled RQ jobs,
+  so running it without authentication let anyone who could reach it run
+  code in the workers.
+
 ## [2.22.0] - 2026-10-23
 
 Security patches, bounded yt-dlp downloads, and images published under

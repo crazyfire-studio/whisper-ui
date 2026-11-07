@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from whisper_ui.core.config import Settings, get_settings
+from whisper_ui.core.constants import MULTIPART_HEADROOM_BYTES
 
 
 def _make_settings(tmp_path, **overrides):
@@ -264,3 +265,23 @@ def test_diarization_default_for_form_respects_setting_and_capability(tmp_path):
 def test_llm_correction_available_reflects_ollama_base_url(tmp_path):
     assert _make_settings(tmp_path, ollama_base_url="").llm_correction_available is False
     assert _make_settings(tmp_path, ollama_base_url="http://ollama:11434").llm_correction_available is True
+
+
+class TestUploadRequestSizeValidator:
+    def test_default_request_cap_covers_the_default_file_cap(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        assert settings.max_upload_request_size >= settings.max_upload_size
+
+    def test_request_cap_below_file_cap_is_rejected(self, tmp_path):
+        with pytest.raises(ValidationError, match="max_upload_request_size"):
+            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=1000)
+
+    def test_request_cap_equal_to_file_cap_is_rejected(self, tmp_path):
+        # The multipart framing would push a file at the per-file cap over it.
+        with pytest.raises(ValidationError, match="multipart framing"):
+            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
+
+    def test_request_cap_with_room_for_the_framing_is_accepted(self, tmp_path):
+        size = 2000 + MULTIPART_HEADROOM_BYTES
+        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=size)
+        assert settings.max_upload_request_size == size

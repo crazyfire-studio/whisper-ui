@@ -145,6 +145,28 @@ class TestSecurityHeaders:
         assert missing == [], f"templates reference hosts not allowed by the CSP: {missing}"
 
 
+class TestApiSchemaAndErrors:
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_api_schema_pages_are_not_served(self, client, path):
+        assert client.get(path).status_code == 404
+
+    def test_unhandled_error_response_carries_request_id_and_security_headers(self, app, client, caplog):
+        def boom():
+            raise RuntimeError("/secret/path exploded")
+
+        app.add_api_route("/boom-for-test", boom)
+        with caplog.at_level("ERROR", logger="whisper_ui.web.app"):
+            resp = client.get("/boom-for-test", headers={"X-Request-ID": "deadbeefcafe"})
+
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Internal Server Error"}
+        assert resp.headers["X-Request-ID"] == "deadbeefcafe"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Frame-Options"] == "SAMEORIGIN"
+        record = next(r for r in caplog.records if "Unhandled error" in r.getMessage())
+        assert record.request_id == "deadbeefcafe"
+
+
 class TestMetricsEndpoint:
     def test_metrics_returns_prometheus_exposition(self, client):
         # app fixture uses a MagicMock redis, so the RQ gauges degrade out; the
@@ -1673,6 +1695,44 @@ class TestUploadPost:
         assert "&lt;script&gt;" in resp.text
 
 
+class TestUploadRequestSizeLimit:
+    """The per-request cap, wired into the real app (see test_upload_limit_middleware)."""
+
+    @pytest.fixture
+    def small_cap_app(self, app, settings):
+        # model_copy skips validation, so a cap this small is allowed here.
+        capped = settings.model_copy(update={"max_upload_size": 500, "max_upload_request_size": 1000})
+        with patch("whisper_ui.core.config.get_settings", return_value=capped):
+            application = create_app()
+        application.state = app.state
+        return application
+
+    def test_oversized_batch_gets_413_with_headers(self, small_cap_app, test_user):
+        client = authed_test_client(small_cap_app, test_user)
+        files = [("files", ("a.mp3", b"x" * 600, "audio/mpeg")), ("files", ("b.mp3", b"x" * 600, "audio/mpeg"))]
+        resp = client.post("/upload", data={"language": "zh"}, files=files, follow_redirects=False)
+        assert resp.status_code == 413
+        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 KB")
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Request-ID"]
+
+    def test_anonymous_oversized_upload_is_sent_to_login_first(self, small_cap_app):
+        from fastapi.testclient import TestClient
+
+        files = [("files", ("a.mp3", b"x" * 2000, "audio/mpeg"))]
+        resp = TestClient(small_cap_app).post(
+            "/upload", files=files, headers={"origin": "http://testserver"}, follow_redirects=False
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"].startswith("/login")
+
+    def test_upload_page_exposes_both_caps_to_the_form(self, client, settings):
+        resp = client.get("/upload")
+        assert f"maxFileSize: {settings.max_upload_size}," in resp.text
+        assert f"maxRequestSize: {settings.max_upload_request_size}," in resp.text
+        assert "multipartHeadroom: 1048576," in resp.text
+
+
 class TestUploadURLPost:
     def _post_url(self, client, url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", **form_data):
         data = {
@@ -2320,16 +2380,16 @@ class TestFormatRelativeTime:
 
 class TestFormatSizeHelper:
     def test_gigabytes_have_one_decimal(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(2 * 1024**3) == "2.0 GB"
+        assert format_size(2 * 1024**3) == "2.0 GB"
 
     def test_megabytes_are_whole(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(500 * 1024**2) == "500 MB"
+        assert format_size(500 * 1024**2) == "500 MB"
 
     def test_sub_megabyte_shows_kilobytes_not_zero_mb(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(512 * 1024) == "512 KB"
+        assert format_size(512 * 1024) == "512 KB"
