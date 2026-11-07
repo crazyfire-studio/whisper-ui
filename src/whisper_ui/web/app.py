@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from whisper_ui.web.auth import AuthMiddleware
 from whisper_ui.web.deps import templates
 from whisper_ui.web.middleware.request_id import RequestIdMiddleware
+from whisper_ui.web.middleware.upload_limit import UploadSizeLimitMiddleware
 
 
 def _build_csp(nonce: str) -> str:
@@ -283,12 +284,25 @@ def create_app() -> FastAPI:
 
     # Middleware order: add_middleware is LIFO, so the order below results in
     # RequestIdMiddleware (outermost) → SessionMiddleware → AuthMiddleware →
-    # SecurityHeadersMiddleware → route handler on the inbound path.
+    # SecurityHeadersMiddleware → UploadSizeLimitMiddleware → route handler
+    # on the inbound path.
     # RequestIdMiddleware must run first so the request_id context var is
     # already populated when SessionMiddleware / AuthMiddleware emit their
     # own log lines (CSRF rejection, session invalidation, etc.).
     # AuthMiddleware needs the session cookie decoded before it runs, so
     # SessionMiddleware must be outside it.
+    # Innermost, so an anonymous or cross-site upload is refused by
+    # AuthMiddleware (which reads only headers) before any size accounting,
+    # and a 413 still carries the security headers and the request id.
+    from whisper_ui.ui import labels as ui_labels
+    from whisper_ui.web.routes.upload import format_size
+
+    application.add_middleware(
+        UploadSizeLimitMiddleware,
+        max_bytes=settings.max_upload_request_size,
+        paths=frozenset({"/upload"}),
+        message=ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit=format_size(settings.max_upload_request_size)),
+    )
     application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(AuthMiddleware)
     application.add_middleware(

@@ -58,7 +58,7 @@
       hx-target="#upload-feedback" hx-swap="innerHTML"
       @htmx:config-request="if (tab === 'url') { $event.detail.path = '/upload/url' }"
       @htmx:xhr:progress.window="onProgress($event)"
-      @htmx:before-request="uploading = true"
+      @htmx:before-request="if (!sizesOk()) { $event.preventDefault(); return; } uploading = true"
       @htmx:after-request="uploading = false; progress = 0"
       @input="markCustomised($event)"
       @change="markCustomised($event)">
@@ -339,8 +339,13 @@ const UPLOAD_PRESETS = {
   lecture:   { language: 'zh', enable_diarization: false, num_speakers: 0, convert_to_traditional: true,  llm_correction_enabled: true  }
 };
 
+// Room for the multipart boundaries and form fields on top of the file bytes.
+const MULTIPART_HEADROOM = 1024 * 1024;
+
 function uploadForm() {
   return {
+    maxFileSize: {{ max_upload_size }},
+    maxRequestSize: {{ max_upload_request_size }},
     tab: '{{ initial_tab|default("files") }}',
     uploading: false,
     progress: 0,
@@ -401,6 +406,29 @@ function uploadForm() {
       const dt = new DataTransfer();
       this.selectedFiles.forEach(f => dt.items.add(f));
       this.$refs.fileInput.files = dt.files;
+    },
+    sizesOk() {
+      // Mirror the server's caps before sending: the server can only refuse
+      // an oversized file or batch after the browser has uploaded it.
+      if (this.tab === 'url') return true;
+      let message = null;
+      const tooBig = this.selectedFiles.find(f => f.size > this.maxFileSize);
+      if (tooBig) {
+        message = {{ labels.UPLOAD_FILE_TOO_LARGE|tojson }}
+          .replace('{name}', tooBig.name).replace('{limit}', this.formatSize(this.maxFileSize));
+      } else {
+        const total = this.selectedFiles.reduce((sum, f) => sum + f.size, 0);
+        if (total + MULTIPART_HEADROOM > this.maxRequestSize) {
+          message = {{ labels.UPLOAD_REQUEST_TOO_LARGE|tojson }}.replace('{limit}', this.formatSize(this.maxRequestSize));
+        }
+      }
+      if (message === null) return true;
+      const alert = document.createElement('div');
+      alert.className = 'alert alert-error';
+      alert.setAttribute('role', 'alert');
+      alert.textContent = message;
+      document.getElementById('upload-feedback').replaceChildren(alert);
+      return false;
     },
     formatSize(bytes) {
       if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 ** 3)).toFixed(1) + ' GB';

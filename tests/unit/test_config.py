@@ -264,3 +264,17 @@ def test_diarization_default_for_form_respects_setting_and_capability(tmp_path):
 def test_llm_correction_available_reflects_ollama_base_url(tmp_path):
     assert _make_settings(tmp_path, ollama_base_url="").llm_correction_available is False
     assert _make_settings(tmp_path, ollama_base_url="http://ollama:11434").llm_correction_available is True
+
+
+class TestUploadRequestSizeValidator:
+    def test_default_request_cap_covers_the_default_file_cap(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        assert settings.max_upload_request_size >= settings.max_upload_size
+
+    def test_request_cap_below_file_cap_is_rejected(self, tmp_path):
+        with pytest.raises(ValidationError, match="max_upload_request_size"):
+            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=1000)
+
+    def test_request_cap_equal_to_file_cap_is_accepted(self, tmp_path):
+        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
+        assert settings.max_upload_request_size == 2000

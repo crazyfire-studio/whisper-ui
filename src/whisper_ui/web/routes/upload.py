@@ -72,7 +72,7 @@ def _build_upload_toast(
     return message, category
 
 
-def _format_size(size_bytes: int) -> str:
+def format_size(size_bytes: int) -> str:
     if size_bytes >= 1024 * 1024 * 1024:
         return f"{size_bytes / (1024**3):.1f} GB"
     if size_bytes >= 1024 * 1024:
@@ -162,6 +162,8 @@ async def upload_page(request: Request, settings: SettingsDep, user: CurrentUser
             "supported_languages": LANGUAGE_CHOICES,
             "whisper_models": WHISPER_MODELS,
             "initial_tab": initial_tab,
+            "max_upload_size": settings.max_upload_size,
+            "max_upload_request_size": settings.max_upload_request_size,
         },
     )
 
@@ -284,7 +286,7 @@ async def upload_submit(
             continue
         if not within_limit:
             dest.unlink(missing_ok=True)
-            limit_str = _format_size(max_size)
+            limit_str = format_size(max_size)
             logger.warning(
                 "upload skipped: user_id=%s filename=%r exceeds max_size=%d",
                 user.id,

@@ -160,6 +160,11 @@ class Settings(BaseSettings):
 
     # Upload
     max_upload_size: int = 2 * 1024 * 1024 * 1024  # 2 GB
+    # Cap on one upload request. The upload page sends a whole batch in one
+    # multipart request, and Starlette spools all of it to disk before the
+    # per-file cap above is checked, so this bounds what one request can write.
+    # Must be >= max_upload_size, or a file at the per-file cap could never fit.
+    max_upload_request_size: int = 10 * 1024 * 1024 * 1024  # 10 GB
     # Optional retention: when > 0, the web app's background loop reclaims
     # the upload directory of any COMPLETED job whose updated_at is older
     # than this many days. FAILED jobs are preserved so the retry button
@@ -264,6 +269,16 @@ class Settings(BaseSettings):
         """VAD without a model file cannot work; fail at startup, not mid-job."""
         if self.whispercpp_vad and not self.whispercpp_vad_model:
             raise ValueError("whispercpp_vad_model must be set when whispercpp_vad is enabled")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_upload_request_size(self) -> Settings:
+        """A request cap below the per-file cap would refuse files the route accepts."""
+        if self.max_upload_request_size < self.max_upload_size:
+            raise ValueError(
+                f"max_upload_request_size ({self.max_upload_request_size}) must be >= "
+                f"max_upload_size ({self.max_upload_size})"
+            )
         return self
 
     @field_validator("ollama_base_url", mode="before")
