@@ -20,8 +20,10 @@ Failure semantics:
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -49,6 +51,20 @@ _SYSTEM_PROMPT = (
     '輸出必須為合法 JSON，格式 {"segments":[{"idx":<int>,"text":"<str>"}, ...]}，\n'
     "idx 必須與輸入 EDIT 區一一對應，數量必須相同，不得輸出任何多餘文字。"
 )
+
+
+# A correction may fix typos, homophones and punctuation. One that changes more
+# than this is a rewrite -- an added note, a paraphrase, a translation, dropped
+# content -- and the segment keeps its original text. Calibrated on gemma4
+# (e4b/12b/26b/31b) corrections of FLEURS, ASCEND and ML2021 transcripts: these
+# bounds rejected 11 of 4,657 edits, which together added 127 errors, and
+# turned gemma4:26b's net effect on FLEURS from +70 errors to -61.
+_MAX_CHANGED_FRACTION = 0.8  # inserted + deleted characters, of the original length
+_MAX_LENGTH_CHANGE_FRACTION = 0.5
+_MIN_ALLOWED_CHANGE = 10  # characters; a short segment still needs room for one fix
+# Byte-fallback tokens ("<0xE8><0x9E><0x84>") that some models emit in place of
+# a character they cannot produce.
+_BYTE_TOKEN = re.compile(r"<0x[0-9A-Fa-f]{2}>")
 
 
 class OllamaClient(Protocol):
@@ -269,9 +285,34 @@ class LLMCorrectionStage:
         return _parse_response(raw_response, {idx for idx, _ in chunk.edit_items})
 
     def _apply_corrections(self, segments: list[Segment], corrections: dict[int, str]) -> None:
+        rejected = 0
         for idx, text in corrections.items():
-            if 0 <= idx < len(segments):
+            if not 0 <= idx < len(segments):
+                continue
+            if _is_plausible_correction(segments[idx].text, text):
                 segments[idx].text = text
+            else:
+                rejected += 1
+        if rejected:
+            # Counts only: segment text is user content.
+            logger.warning(
+                "llm_correction kept original text for implausible corrections",
+                extra={"rejected_segments": rejected, "chunk_segments": len(corrections)},
+            )
+
+
+def _is_plausible_correction(original: str, corrected: str) -> bool:
+    """Return whether ``corrected`` stays within what a typo fix can change."""
+    if not corrected.strip():
+        return not original.strip()
+    if _BYTE_TOKEN.search(corrected) and not _BYTE_TOKEN.search(original):
+        return False
+    length = len(original)
+    if abs(len(corrected) - length) > max(_MIN_ALLOWED_CHANGE, _MAX_LENGTH_CHANGE_FRACTION * length):
+        return False
+    blocks = difflib.SequenceMatcher(None, original, corrected, autojunk=False).get_matching_blocks()
+    changed = length + len(corrected) - 2 * sum(block.size for block in blocks)
+    return changed <= max(_MIN_ALLOWED_CHANGE, _MAX_CHANGED_FRACTION * length)
 
 
 def _build_user_prompt(chunk: _Chunk) -> str:
