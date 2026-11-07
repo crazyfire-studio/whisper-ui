@@ -26,6 +26,7 @@ import logging
 import logging.config
 import os
 import re
+import unicodedata
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
@@ -169,6 +170,42 @@ def _is_sensitive_key(key: str) -> bool:
     return bool(_SENSITIVE_KEY_RE.search(key))
 
 
+# The two separators Python treats as line breaks that are not in the "C"
+# category: U+2028 LINE SEPARATOR is Zl and U+2029 PARAGRAPH SEPARATOR is Zp.
+# str.splitlines() breaks on both, so a log consumer that splits lines sees a
+# forged line even though neither is a control character. Named explicitly
+# rather than excluding all of "Z": that class also holds U+00A0 NO-BREAK
+# SPACE and the other spaces, which are ordinary text in a title.
+_LINE_SEPARATORS = ("\u2028", "\u2029")
+
+
+def collapse_control_chars(text: str) -> str:
+    """Replace control characters with spaces so text cannot forge log lines.
+
+    Every Unicode "C" category character -- C0/C1 controls, but also format
+    characters such as U+202E RIGHT-TO-LEFT OVERRIDE -- becomes a space, as
+    do the two line separators in ``_LINE_SEPARATORS``.
+    """
+    # Fast path: printable text holds neither (isprintable() is False for the
+    # "C" and "Z" categories, bar the ASCII space).
+    if text.isprintable():
+        return text
+    return "".join(" " if unicodedata.category(ch).startswith("C") or ch in _LINE_SEPARATORS else ch for ch in text)
+
+
+class TextFormatter(logging.Formatter):
+    """The human-readable format, with control characters collapsed.
+
+    Request paths, filenames and remote error text reach log messages, and a
+    newline in any of them (``%0A`` in a URL path decodes to one) would start a
+    forged line. Only the formatted line is collapsed: ``format()`` appends a
+    traceback afterwards, and its line breaks are real.
+    """
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        return collapse_control_chars(super().formatMessage(record))
+
+
 class JsonFormatter(logging.Formatter):
     """Render each LogRecord as one JSON line (selected when ``LOG_JSON`` is set).
 
@@ -196,7 +233,9 @@ class JsonFormatter(logging.Formatter):
             payload["exc"] = self.formatException(record.exc_info)
         if record.stack_info:
             payload["stack"] = self.formatStack(record.stack_info)
-        return json.dumps(payload, ensure_ascii=False, default=str)
+        # json.dumps escapes C0 controls but, with ensure_ascii=False, writes
+        # U+2028/U+2029 and format characters through raw.
+        return collapse_control_chars(json.dumps(payload, ensure_ascii=False, default=str))
 
 
 def setup_logging(*, log_level: str | None = None, log_json: bool | None = None) -> None:
@@ -229,7 +268,8 @@ def setup_logging(*, log_level: str | None = None, log_json: bool | None = None)
         },
         "formatters": {
             "default": {
-                "format": ("%(asctime)s %(levelname)s %(name)s [req=%(request_id)s user=%(user_id)s] %(message)s"),
+                "()": TextFormatter,
+                "fmt": "%(asctime)s %(levelname)s %(name)s [req=%(request_id)s user=%(user_id)s] %(message)s",
                 "datefmt": "%Y-%m-%dT%H:%M:%S%z",
             },
             "json": {

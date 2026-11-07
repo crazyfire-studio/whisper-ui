@@ -13,6 +13,7 @@ from whisper_ui.core.logging_setup import (
     JsonFormatter,
     RequestContextFilter,
     _resolve_json,
+    collapse_control_chars,
     current_request_id,
     current_user_id,
     mask_username,
@@ -308,3 +309,57 @@ def test_setup_logging_defaults_to_text_when_log_json_unset(monkeypatch, capsys)
     captured = capsys.readouterr().err
     assert "plain line" in captured
     assert "[req=" in captured  # text format, not JSON
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("plain ascii", "plain ascii"),
+        ("第三講 (2026)", "第三講 (2026)"),
+        ("Lecture\u00a03", "Lecture\u00a03"),  # NO-BREAK SPACE is ordinary text
+        ("a\nb\rc\td", "a b c d"),
+        ("a\u2028b\u2029c", "a b c"),
+        ("x\u202ey", "x y"),  # RIGHT-TO-LEFT OVERRIDE
+        ("\x1b[31mred", " [31mred"),
+    ],
+)
+def test_collapse_control_chars(raw, expected):
+    assert collapse_control_chars(raw) == expected
+
+
+def test_text_log_line_cannot_be_split_by_logged_values(monkeypatch, capsys):
+    # A percent-decoded request path is the live case: /x%0A... reaches the
+    # access log as a real newline.
+    monkeypatch.delenv("LOG_JSON", raising=False)
+    setup_logging()
+
+    logging.getLogger("whisper_ui.test").info("path=%s", "/x\n2026-01-01T00:00:00+0000 ERROR forged")
+
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1
+    assert lines[0].endswith("path=/x 2026-01-01T00:00:00+0000 ERROR forged")
+
+
+def test_text_traceback_keeps_its_line_breaks(monkeypatch, capsys):
+    monkeypatch.delenv("LOG_JSON", raising=False)
+    setup_logging()
+
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        logging.getLogger("whisper_ui.test").exception("failed")
+
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last):" in err.splitlines()
+    assert "ValueError: boom" in err.splitlines()
+
+
+def test_json_line_cannot_be_split_by_unicode_line_separators(monkeypatch, capsys):
+    monkeypatch.setenv("LOG_JSON", "true")
+    setup_logging()
+
+    logging.getLogger("whisper_ui.test").info("title=%s", "a\u2028b\u202ec")
+
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["message"] == "title=a b c"
