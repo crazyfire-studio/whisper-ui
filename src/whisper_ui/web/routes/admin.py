@@ -4,7 +4,7 @@ All endpoints depend on :data:`AdminUserDep`, which 403s non-admins before
 the handler runs. Mutating handlers additionally guard against the
 "system locked out of itself" failure modes:
 
-* Cannot deactivate / demote / delete the last active admin
+* Cannot deactivate / demote the last active admin
   (enforced inside ``users_repo`` so future call sites inherit the rule).
 * Self-action policy:
 

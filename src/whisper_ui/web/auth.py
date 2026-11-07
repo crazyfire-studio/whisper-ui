@@ -19,8 +19,8 @@ in practice:
   same browser context send a same-origin ``Origin`` header automatically.
 * **Public path whitelist** — ``/login``, ``/register``, ``/logout``,
   ``/health``, ``/metrics``, ``/favicon.ico`` and anything under ``/static/``
-  skip the auth gate so the login form, health check, Prometheus scrape and
-  assets are reachable while signed out.
+  or ``/shared/`` skip the auth gate so the login form, health check,
+  Prometheus scrape, assets and share links are reachable while signed out.
 
 Dependencies (:data:`CurrentUserDep`, :data:`AdminUserDep`) read what the
 middleware put on ``request.state``; they do not re-query the DB.
