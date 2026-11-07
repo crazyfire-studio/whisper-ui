@@ -145,6 +145,28 @@ class TestSecurityHeaders:
         assert missing == [], f"templates reference hosts not allowed by the CSP: {missing}"
 
 
+class TestApiSchemaAndErrors:
+    @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+    def test_api_schema_pages_are_not_served(self, client, path):
+        assert client.get(path).status_code == 404
+
+    def test_unhandled_error_response_carries_request_id_and_security_headers(self, app, client, caplog):
+        def boom():
+            raise RuntimeError("/secret/path exploded")
+
+        app.add_api_route("/boom-for-test", boom)
+        with caplog.at_level("ERROR", logger="whisper_ui.web.app"):
+            resp = client.get("/boom-for-test", headers={"X-Request-ID": "deadbeefcafe"})
+
+        assert resp.status_code == 500
+        assert resp.json() == {"detail": "Internal Server Error"}
+        assert resp.headers["X-Request-ID"] == "deadbeefcafe"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Frame-Options"] == "SAMEORIGIN"
+        record = next(r for r in caplog.records if "Unhandled error" in r.getMessage())
+        assert record.request_id == "deadbeefcafe"
+
+
 class TestMetricsEndpoint:
     def test_metrics_returns_prometheus_exposition(self, client):
         # app fixture uses a MagicMock redis, so the RQ gauges degrade out; the
@@ -1262,6 +1284,107 @@ class TestViewerRoutes:
         assert "%E6%B8%AC%E8%A9%A6%E9%9F%B3%E6%AA%94" in cd
 
 
+def _create_shared_job(db, filestore) -> Job:
+    """A COMPLETED upload job with audio, one segment, and a share token."""
+    job = _completed_upload_job_with_audio(db, filestore)
+    filestore.save_result(
+        job.id,
+        TranscriptResult(segments=[Segment(start=0.0, end=1.0, text="shared words")], language="zh", duration=1.0),
+    )
+    job.share_token = "test-share-token-not-real"
+    db.update_job(job)
+    return job
+
+
+class TestShareRoutes:
+    def test_share_create_persists_token_and_refreshes(self, client, db, filestore):
+        job = _create_completed_job(db, filestore)
+
+        resp = client.post(f"/viewer/{job.id}/share", headers={"HX-Request": "true"})
+
+        assert resp.status_code == 200
+        assert resp.headers["HX-Refresh"] == "true"
+        assert db.get_job(job.id).share_token
+
+    def test_share_create_flashes_confirmation_on_reload(self, client, db, filestore):
+        job = _create_completed_job(db, filestore)
+
+        client.post(f"/viewer/{job.id}/share", headers={"HX-Request": "true"})
+        page = client.get(f"/viewer/{job.id}")
+
+        assert ui_labels.VIEWER_SHARE_LINK_CREATED in flash_messages(page.text)
+
+    def test_share_create_keeps_existing_token(self, client, db, filestore):
+        job = _create_shared_job(db, filestore)
+
+        client.post(f"/viewer/{job.id}/share")
+
+        assert db.get_job(job.id).share_token == "test-share-token-not-real"
+
+    def test_share_create_rejects_unfinished_job(self, client, db):
+        job = _create_failed_job(db)
+
+        resp = client.post(f"/viewer/{job.id}/share")
+
+        assert resp.status_code == 404
+        assert db.get_job(job.id).share_token is None
+
+    def test_share_revoke_clears_token(self, client, db, filestore):
+        job = _create_shared_job(db, filestore)
+
+        resp = client.delete(f"/viewer/{job.id}/share")
+
+        assert resp.status_code == 200
+        assert db.get_job(job.id).share_token is None
+
+    def test_shared_viewer_renders_without_login(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}")
+
+        assert resp.status_code == 200
+        assert "shared words" in resp.text
+
+    def test_shared_viewer_unknown_token_returns_404(self, app):
+        from fastapi.testclient import TestClient
+
+        resp = TestClient(app).get("/shared/unknown-token")
+
+        assert resp.status_code == 404
+
+    def test_shared_viewer_revoked_token_returns_404(self, client, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        client.delete(f"/viewer/{job.id}/share")
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}")
+
+        assert resp.status_code == 404
+
+    def test_shared_media_serves_source_without_login(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}/media")
+
+        assert resp.status_code == 200
+        assert resp.content == b"original audio bytes"
+
+    def test_shared_media_missing_source_returns_404(self, app, db, filestore):
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        filestore.delete_upload_files(job.id)
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}/media")
+
+        assert resp.status_code == 404
+
+
 class TestUploadPost:
     def _upload(self, client, files=None, **form_data):
         data = {
@@ -1555,6 +1678,44 @@ class TestUploadPost:
         )
         assert "<script>" not in resp.text
         assert "&lt;script&gt;" in resp.text
+
+
+class TestUploadRequestSizeLimit:
+    """The per-request cap, wired into the real app (see test_upload_limit_middleware)."""
+
+    @pytest.fixture
+    def small_cap_app(self, app, settings):
+        # model_copy skips validation, so a cap this small is allowed here.
+        capped = settings.model_copy(update={"max_upload_size": 500, "max_upload_request_size": 1000})
+        with patch("whisper_ui.core.config.get_settings", return_value=capped):
+            application = create_app()
+        application.state = app.state
+        return application
+
+    def test_oversized_batch_gets_413_with_headers(self, small_cap_app, test_user):
+        client = authed_test_client(small_cap_app, test_user)
+        files = [("files", ("a.mp3", b"x" * 600, "audio/mpeg")), ("files", ("b.mp3", b"x" * 600, "audio/mpeg"))]
+        resp = client.post("/upload", data={"language": "zh"}, files=files, follow_redirects=False)
+        assert resp.status_code == 413
+        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 KB")
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["X-Request-ID"]
+
+    def test_anonymous_oversized_upload_is_sent_to_login_first(self, small_cap_app):
+        from fastapi.testclient import TestClient
+
+        files = [("files", ("a.mp3", b"x" * 2000, "audio/mpeg"))]
+        resp = TestClient(small_cap_app).post(
+            "/upload", files=files, headers={"origin": "http://testserver"}, follow_redirects=False
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"].startswith("/login")
+
+    def test_upload_page_exposes_both_caps_to_the_form(self, client, settings):
+        resp = client.get("/upload")
+        assert f"maxFileSize: {settings.max_upload_size}," in resp.text
+        assert f"maxRequestSize: {settings.max_upload_request_size}," in resp.text
+        assert "multipartHeadroom: 1048576," in resp.text
 
 
 class TestUploadURLPost:
@@ -2203,16 +2364,16 @@ class TestFormatRelativeTime:
 
 class TestFormatSizeHelper:
     def test_gigabytes_have_one_decimal(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(2 * 1024**3) == "2.0 GB"
+        assert format_size(2 * 1024**3) == "2.0 GB"
 
     def test_megabytes_are_whole(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(500 * 1024**2) == "500 MB"
+        assert format_size(500 * 1024**2) == "500 MB"
 
     def test_sub_megabyte_shows_kilobytes_not_zero_mb(self):
-        from whisper_ui.web.routes.upload import _format_size
+        from whisper_ui.web.routes.upload import format_size
 
-        assert _format_size(512 * 1024) == "512 KB"
+        assert format_size(512 * 1024) == "512 KB"
