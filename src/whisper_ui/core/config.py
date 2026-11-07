@@ -161,9 +161,10 @@ class Settings(BaseSettings):
     # Upload
     max_upload_size: int = 2 * 1024 * 1024 * 1024  # 2 GB
     # Optional retention: when > 0, the web app's background loop reclaims
-    # the upload directory of any COMPLETED job whose updated_at is older
-    # than this many days. FAILED jobs are preserved so the retry button
-    # keeps working (retry reuses the original upload path). The DB row
+    # the upload directory of any COMPLETED job, and of any FAILED URL job,
+    # whose updated_at is older than this many days. A FAILED upload job is
+    # preserved so the retry button keeps working (retry reuses the original
+    # upload path); a URL job's retry downloads again. The DB row
     # and the saved transcript (result.json) are kept so the viewer
     # keeps working. Default 0 means never auto-reclaim — legacy behaviour.
     upload_retention_days: int = 0

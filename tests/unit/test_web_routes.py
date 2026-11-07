@@ -2137,7 +2137,7 @@ class TestRetentionSweep:
         removed_3 = _run_retention_sweep(settings.database_path, filestore, threshold_iso, limit)
         assert removed_3 == 0
 
-    def test_list_terminal_job_ids_orders_oldest_first(self, db):
+    def test_list_reclaimable_upload_job_ids_orders_oldest_first(self, db):
         """Stable ORDER BY makes the sweep deterministic; assert that
         the SQL contract returns oldest-first regardless of insert order."""
         from datetime import UTC, datetime, timedelta
@@ -2157,7 +2157,7 @@ class TestRetentionSweep:
         db._conn.commit()
 
         threshold_iso = (now - timedelta(days=1)).isoformat()
-        ids = db.list_terminal_job_ids_older_than(threshold_iso)
+        ids = db.list_reclaimable_upload_job_ids(threshold_iso)
         assert ids == [older.id, newer.id]
 
 
