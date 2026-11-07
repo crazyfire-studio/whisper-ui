@@ -13,6 +13,7 @@ from whisper_ui.web.middleware.request_id import (
     REQUEST_ID_HEADER,
     RequestIdMiddleware,
     _normalise_request_id,
+    loggable_path,
 )
 
 _HEX_8_PATTERN = re.compile(r"^[0-9a-f]{8}$")
@@ -212,3 +213,16 @@ def test_client_ip_falls_back_to_request_client_when_xff_absent(caplog):
         assert "ip=testclient" in access.getMessage()
     finally:
         caplog.handler.removeFilter(caplog.handler.filters[-1])
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/shared/abcdefghijklmnop", "/shared/****mnop"),
+        ("/shared/abcdefghijklmnop/media", "/shared/****mnop/media"),
+        ("/jobs/123", "/jobs/123"),
+        ("/shared/", "/shared/****"),
+    ],
+)
+def test_loggable_path_masks_share_tokens(path, expected):
+    assert loggable_path(path) == expected
