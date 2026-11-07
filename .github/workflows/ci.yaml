@@ -67,9 +67,9 @@ jobs:
         #
         # --extra dev transitively pulls in the frontend and worker-llm
         # extras (fastapi / python-docx / httpx) so audit covers the whole
-        # web tier. The worker extra's heavy ML deps (transformers /
-        # pyannote / faster-whisper) are monitored by Dependabot instead
-        # to avoid alert fatigue from upstream-unpatched CVEs.
+        # web tier. The worker extras are audited by audit-worker.yaml,
+        # which gates only dependency changes so that an upstream advisory
+        # in the ML stack does not block unrelated pull requests.
         #
         # --quiet suppresses uv's progress lines so they cannot leak into
         # stdout and confuse pip-audit's requirements parser.
