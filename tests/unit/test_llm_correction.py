@@ -1,3 +1,5 @@
+# ruff: noqa: RUF001
+
 from __future__ import annotations
 
 import json
@@ -12,7 +14,7 @@ from whisper_ui.core.messages import (
     LLM_CORRECTION_SKIPPED,
 )
 from whisper_ui.core.models import Segment, TranscriptResult
-from whisper_ui.pipeline.llm_correction import LLMCorrectionStage
+from whisper_ui.pipeline.llm_correction import LLMCorrectionStage, _is_plausible_correction
 
 
 @dataclass
@@ -458,3 +460,50 @@ def test_fallback_on_shape_errors(bad_payload: str):
 
     stage.execute({"transcript_result": transcript, "language": "zh"})
     assert transcript.segments[0].text == "甲"
+
+
+@pytest.mark.parametrize(
+    ("original", "corrected"),
+    [
+        ("我們今天要講機氣學習", "我們今天要講機器學習"),  # one homophone
+        ("對阿", "對啊"),  # short segment, whole-segment change within the floor
+        ("你要去找一個內臥的參數", "你要去找一個內積的參數。"),  # fix plus punctuation
+        ("", ""),
+    ],
+)
+def test_typo_level_corrections_are_plausible(original, corrected):
+    assert _is_plausible_correction(original, corrected)
+
+
+@pytest.mark.parametrize(
+    ("original", "corrected"),
+    [
+        ("這並不是告別這是一個篇章的結束", ""),  # dropped content
+        ("這並不是告別這是一個篇章的結束", "   "),
+        # An added note (observed with gemma4:26b on FLEURS).
+        (
+            "他受到了新加坡副總理黃賁成的歡迎",
+            "他受到了新加坡副總理黃欣成（註：原文「黃賁成」疑似錯字，但依指令不改動專有名詞，故保留）的歡迎",
+        ),
+        # Speech rendered in another language (observed on ASCEND).
+        ("To do this it's like something you must do", "做這件事是你必須要做的事，因為我們正在畢業"),
+        # Byte-fallback tokens in place of a character (observed with gemma4:26b and 31b).
+        ("昆蟲學家們用蟲字一詞", "昆蟲學家們用蟲<0xE7><0x98><0xBF>一詞"),
+        # Text added to an empty or whitespace-only segment, short enough to
+        # pass the size bounds on their own.
+        ("", "新增文字"),
+        ("   ", "新增"),
+    ],
+)
+def test_rewrites_and_garbage_are_implausible(original, corrected):
+    assert not _is_plausible_correction(original, corrected)
+
+
+def test_implausible_segment_keeps_original_text_while_its_chunk_is_corrected():
+    stage, client = _make_stage(chunk_size=10, chunk_context=0)
+    transcript = _make_transcript(["原文一號", "這並不是告別這是一個篇章的結束"])
+
+    client.responses = [_valid_response_for([0, 1], ["原文一號。", ""])]
+    stage.execute({"transcript_result": transcript, "language": "zh"})
+
+    assert [s.text for s in transcript.segments] == ["原文一號。", "這並不是告別這是一個篇章的結束"]
