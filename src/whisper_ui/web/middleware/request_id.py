@@ -123,6 +123,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         request_id = _normalise_request_id(request.headers.get(REQUEST_ID_HEADER))
         tokens = set_request_context(request_id=request_id, user_id="-")
+        # Also on request.state: the contextvar is reset in the finally below,
+        # before the app's 500 handler (in ServerErrorMiddleware, outside this
+        # middleware) runs, and that handler shares this request's scope.
+        request.state.request_id = request_id
         start_ns = time.perf_counter_ns()
         status_code: int = _UNCAUGHT_STATUS_SENTINEL
         try:
