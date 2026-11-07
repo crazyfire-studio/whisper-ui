@@ -192,7 +192,11 @@ jobs:
   # rendering is interpreter-independent. Needs the compiled stylesheet (built
   # here, since style.css is gitignored) and a headless Chromium.
   visual-tests:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where the locked Playwright (1.60)
+    # refuses to install Chromium ("Playwright does not support chromium on
+    # ubuntu26.04-x64"). Return to ubuntu-latest once the lock carries a
+    # Playwright release that supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
