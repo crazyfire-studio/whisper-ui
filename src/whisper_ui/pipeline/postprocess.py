@@ -139,7 +139,11 @@ class PostprocessStage:
             from opencc import OpenCC
 
             if self._converter is None:
-                self._converter = OpenCC("s2t")
+                # s2twp: Taiwan character forms and vocabulary (軟件 -> 軟體,
+                # 視頻 -> 影片), not just a character-level s2t mapping. Its
+                # phrase table can misfire on a word with another sense
+                # (比賽項目 -> 比賽專案); optional LLM correction runs after this.
+                self._converter = OpenCC("s2twp")
             return [
                 Segment(
                     start=s.start,

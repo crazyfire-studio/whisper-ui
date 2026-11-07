@@ -149,3 +149,14 @@ def test_quality_gate_ignores_empty_segment_texts():
     texts = ["   "] * 25 + ["同一句"] * 19
     result = stage.execute({"final_result": _raw_with_texts(texts), "language": "zh", "duration": 44.0})
     assert "quality_warning" not in result
+
+
+def test_chinese_conversion_uses_taiwan_phrases():
+    """s2twp, not s2t: Taiwan vocabulary as well as Traditional characters."""
+    stage = PostprocessStage(convert_to_traditional=True)
+    mock_opencc = MagicMock()
+    mock_opencc.OpenCC.return_value.convert.side_effect = lambda text: text
+    with patch.dict("sys.modules", {"opencc": mock_opencc}):
+        raw = {"language": "zh", "segments": [{"start": 0.0, "end": 1.0, "text": "软件"}]}
+        stage.execute({"transcription_result": raw, "language": "zh", "duration": 1.0})
+    mock_opencc.OpenCC.assert_called_once_with("s2twp")
