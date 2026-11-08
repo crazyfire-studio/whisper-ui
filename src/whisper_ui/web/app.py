@@ -136,22 +136,29 @@ def _run_retention_sweep(db_path, filestore, threshold_iso: str, limit: int) -> 
     backlog larger than ``limit`` would stall: retention does not touch
     the DB row, so the next sweep returns the same id list, and slicing
     ``ids[:limit]`` would re-visit only the (already-reclaimed) first
-    ``limit`` ids and never reach the rest. Counting only ``True``
-    returns from ``delete_upload_files`` lets the loop skip past
-    already-reclaimed dirs and find real work further down the list.
+    ``limit`` ids and never reach the rest. Counting only directories
+    actually moved lets the loop skip past already-reclaimed ones and find
+    real work further down the list.
+
+    A retry can claim a listed FAILED URL job before the sweep reaches it,
+    so each directory is moved aside under ``upload_reclaim_lock``, which
+    re-checks the job and holds off that claim. The slow delete runs after
+    the loop, outside the lock.
     """
     from contextlib import closing
 
     from whisper_ui.storage.database import JobDatabase
 
-    with closing(JobDatabase(db_path)) as db:
-        ids = db.list_reclaimable_upload_job_ids(threshold_iso)
     removed = 0
-    for jid in ids:
-        if removed >= limit:
-            break
-        if filestore.delete_upload_files(jid):
-            removed += 1
+    with closing(JobDatabase(db_path)) as db:
+        for jid in db.list_reclaimable_upload_job_ids(threshold_iso):
+            if removed >= limit:
+                break
+            with db.upload_reclaim_lock(jid, threshold_iso) as reclaimable:
+                detached = filestore.detach_upload_dir(jid) if reclaimable else None
+            if detached is not None:
+                removed += 1
+    filestore.purge_detached_uploads()
     return removed
 
 

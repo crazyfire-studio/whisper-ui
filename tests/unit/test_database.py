@@ -949,6 +949,52 @@ def test_list_reclaimable_upload_job_ids_returns_empty_when_threshold_in_past(db
     assert db.list_reclaimable_upload_job_ids(far_past) == []
 
 
+def _old_failed_url_job(db: JobDatabase) -> tuple[Job, str]:
+    """Insert a FAILED URL job past a 7-day threshold; return it and the threshold."""
+    now = datetime.now(UTC)
+    job = Job(filename="url", status=JobStatus.FAILED, source_url="https://www.youtube.com/watch?v=x")
+    db.insert_job(job)
+    db._conn.execute("UPDATE jobs SET updated_at = ? WHERE id = ?", ((now - timedelta(days=30)).isoformat(), job.id))
+    db._conn.commit()
+    return job, (now - timedelta(days=7)).isoformat()
+
+
+def test_upload_reclaim_lock_yields_true_for_a_reclaimable_job(db: JobDatabase):
+    job, threshold = _old_failed_url_job(db)
+
+    with db.upload_reclaim_lock(job.id, threshold) as reclaimable:
+        assert reclaimable is True
+
+
+def test_upload_reclaim_lock_yields_false_once_a_retry_claimed_the_job(db: JobDatabase):
+    job, threshold = _old_failed_url_job(db)
+    assert db.try_claim_retry(job.id, None)
+
+    with db.upload_reclaim_lock(job.id, threshold) as reclaimable:
+        assert reclaimable is False
+
+
+def test_upload_reclaim_lock_blocks_writers_until_it_ends(db: JobDatabase, settings):
+    job, threshold = _old_failed_url_job(db)
+    other = sqlite3.connect(str(settings.database_path), timeout=0)
+    try:
+        with db.upload_reclaim_lock(job.id, threshold), pytest.raises(sqlite3.OperationalError, match="locked"):
+            other.execute("UPDATE jobs SET status = 'queued' WHERE id = ?", (job.id,))
+        other.execute("UPDATE jobs SET status = 'queued' WHERE id = ?", (job.id,))
+        other.commit()
+    finally:
+        other.close()
+
+
+def test_upload_reclaim_lock_releases_the_lock_when_the_block_raises(db: JobDatabase):
+    job, threshold = _old_failed_url_job(db)
+
+    with pytest.raises(RuntimeError), db.upload_reclaim_lock(job.id, threshold):
+        raise RuntimeError("detach failed")
+
+    assert db.try_claim_retry(job.id, None)
+
+
 def test_insert_and_get_preserves_source_job_id(db: JobDatabase):
     job = Job(filename="v2.mp3", filepath="/tmp/v2.mp3", source_job_id="root-abc")
     db.insert_job(job)

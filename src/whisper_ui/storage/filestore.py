@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import uuid
 from pathlib import Path
 
 from whisper_ui.core.models import TranscriptResult
 
 logger = logging.getLogger(__name__)
+
+# Under the upload root; job ids are UUIDs, so no job directory has this name.
+_DETACHED_DIR = ".reclaim"
 
 
 class FileStore:
@@ -127,7 +131,7 @@ class FileStore:
         so a filesystem error here leaves orphaned files that the route logs for
         manual/retention cleanup rather than a dangling DB row. Best-effort
         cleanup that never raises (which suits the retention sweep) belongs in
-        :meth:`delete_upload_files`, not here.
+        :meth:`detach_upload_dir` and :meth:`purge_detached_uploads`, not here.
         """
         removed: list[str] = []
         for base, label in ((self._upload_dir, "upload"), (self._output_dir, "output")):
@@ -143,25 +147,43 @@ class FileStore:
                 "+".join(removed),
             )
 
-    def delete_upload_files(self, job_id: str) -> bool:
-        """Remove only the upload directory for ``job_id``; keep results.
+    def detach_upload_dir(self, job_id: str) -> Path | None:
+        """Move the upload directory for ``job_id`` aside; return where it went.
 
-        Returns True when the directory existed and was removed. Used by
-        the optional retention task to reclaim disk on long-finished jobs
-        while preserving the transcript and the DB row so the viewer
-        keeps working.
+        Returns None when there is no directory or it cannot be moved. The
+        retention sweep calls this under the database write lock, so it only
+        renames, which is atomic and fast; :meth:`purge_detached_uploads`
+        does the slow delete afterwards. The transcript and the DB row stay,
+        so the viewer keeps working.
         """
         job_dir = self._upload_dir / job_id
-        if not job_dir.exists():
-            return False
+        if not job_dir.is_dir():
+            return None
+        target = self._upload_dir / _DETACHED_DIR / f"{job_id}.{uuid.uuid4().hex}"
         try:
-            shutil.rmtree(job_dir)
+            target.parent.mkdir(exist_ok=True)
+            job_dir.rename(target)
         except OSError as exc:
-            logger.warning(
-                "filestore upload-dir reclaim failed for job_id=%s: %s",
-                job_id,
-                exc.__class__.__name__,
-            )
-            return False
-        logger.debug("filestore reclaimed upload dir for job_id=%s", job_id)
-        return True
+            logger.warning("filestore upload-dir detach failed for job_id=%s: %s", job_id, exc.__class__.__name__)
+            return None
+        logger.debug("filestore detached upload dir for job_id=%s", job_id)
+        return target
+
+    def purge_detached_uploads(self) -> int:
+        """Delete every directory :meth:`detach_upload_dir` moved aside; return how many.
+
+        Also clears what an interrupted sweep left behind. A directory that
+        cannot be deleted is logged and retried on the next sweep.
+        """
+        detached = self._upload_dir / _DETACHED_DIR
+        if not detached.is_dir():
+            return 0
+        purged = 0
+        for entry in detached.iterdir():
+            try:
+                shutil.rmtree(entry)
+            except OSError as exc:
+                logger.warning("filestore purge of %s failed: %s", entry.name, exc.__class__.__name__)
+                continue
+            purged += 1
+        return purged
