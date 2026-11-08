@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 import pytest
 from rq.job import Job as RQJob
+from rq.job import JobStatus as RQJobStatus
 
 from whisper_ui.core.constants import (
     WORKER_QUEUE_CPU,
@@ -1009,11 +1010,10 @@ def test_subjobs_carry_current_generation_in_meta(tmp_path):
 
 def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeypatch, tmp_path):
     """Regression for PR #39 R3 Layer 1: a failed transcribe_align must
-    fire send_stop_job_command for every sibling sub-job (so diarize
-    running on a second GPU worker is actually stopped), not just
-    sub.cancel() which leaves running jobs untouched. The test mocks
-    send_stop_job_command on the dispatcher module and asserts it was
-    invoked for each non-excluded sub-job.
+    fire send_stop_job_command for a sibling that is still running (so
+    diarize on a second GPU worker is actually stopped), not just
+    sub.cancel() which leaves running jobs untouched. Siblings that are not
+    running get no stop command: RQ 3 logs a WARNING for each one.
     """
     from whisper_ui.worker import pipeline_dispatcher as pd
 
@@ -1034,7 +1034,9 @@ def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeyp
     assert len(sub_ids) >= 3  # preprocess + transcribe_align + diarize at minimum
 
     failing = next(s for s in _load_subjobs(redis, job.id) if _stage_func(s) == "run_transcribe_align")
-    expected_targets = sub_ids - {failing.id}
+    running = next(s for s in _load_subjobs(redis, job.id) if _stage_func(s) == "run_diarize")
+    running.set_status(RQJobStatus.STARTED)
+    expected_targets = {running.id}
 
     runtime = MagicMock()
     runtime.redis = redis
@@ -1059,7 +1061,7 @@ def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeyp
 
     called_sub_ids = {call.args[1] for call in mock_stop.call_args_list}
     assert called_sub_ids == expected_targets, (
-        f"send_stop_job_command should target every sibling except the failing one. "
+        f"send_stop_job_command should target only the running sibling. "
         f"expected {expected_targets}, got {called_sub_ids}"
     )
     # The failing sub-job itself must not receive a stop command (RQ would
