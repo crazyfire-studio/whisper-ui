@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1718,6 +1719,16 @@ class TestUploadRequestSizeLimit:
     def test_upload_page_explains_when_to_pick_auto_detect(self, client):
         resp = client.get("/upload")
         assert f'data-tip="{ui_labels.UPLOAD_LANGUAGE_HELP}"' in resp.text
+
+    def test_language_select_has_a_name_and_the_help_as_its_description(self, client):
+        # The tooltip text reaches screen readers only through the legend's CSS
+        # content, and the select had no accessible name of its own.
+        html = client.get("/upload").text
+        select = re.search(r'<select name="language"[^>]*>', html).group(0)
+        assert f'aria-label="{ui_labels.UPLOAD_LANGUAGE}"' in select
+        assert 'aria-describedby="upload-language-help"' in select
+        assert f'<span id="upload-language-help" hidden>{ui_labels.UPLOAD_LANGUAGE_HELP}</span>' in html
+        assert html.count('aria-describedby="upload-language-help"') == 2
 
     def test_upload_page_exposes_both_caps_to_the_form(self, client, settings):
         resp = client.get("/upload")

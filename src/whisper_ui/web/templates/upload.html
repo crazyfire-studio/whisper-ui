@@ -221,17 +221,23 @@
           <span class="inline-flex items-center gap-1">
             {{ labels.UPLOAD_LANGUAGE }}
             <span class="tooltip tooltip-right" data-tip="{{ labels.UPLOAD_LANGUAGE_HELP }}">
-              <span class="text-xs opacity-60 cursor-help" tabindex="0" aria-label="{{ labels.UPLOAD_INFOTIP_LABEL }}">ⓘ</span>
+              <span class="text-xs opacity-60 cursor-help" tabindex="0" aria-label="{{ labels.UPLOAD_INFOTIP_LABEL }}"
+                    aria-describedby="upload-language-help">ⓘ</span>
             </span>
           </span>
         </legend>
-        <select name="language" class="select w-full">
+        {# The tooltip's text reaches assistive technology only through the CSS
+           content of the legend, so the select gets its own name and the help
+           as its description. #}
+        <select name="language" class="select w-full" aria-label="{{ labels.UPLOAD_LANGUAGE }}"
+                aria-describedby="upload-language-help">
           {% for code in supported_languages %}
           <option value="{{ code }}" {% if code == default_language %}selected{% endif %}>
             {{ LANGUAGE_LABELS.get(code, code) }}
           </option>
           {% endfor %}
         </select>
+        <span id="upload-language-help" hidden>{{ labels.UPLOAD_LANGUAGE_HELP }}</span>
       </fieldset>
       <fieldset class="fieldset w-full">
         <legend class="fieldset-legend text-sm">{{ labels.UPLOAD_MODEL }}</legend>
