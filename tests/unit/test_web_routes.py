@@ -1378,7 +1378,7 @@ class TestShareRoutes:
         from fastapi.testclient import TestClient
 
         job = _create_shared_job(db, filestore)
-        filestore.delete_upload_files(job.id)
+        filestore.detach_upload_dir(job.id)
 
         resp = TestClient(app).get(f"/shared/{job.share_token}/media")
 
@@ -2237,7 +2237,7 @@ class TestRetentionSweep:
 
         job = Job(filename=f"old-{idx}.mp3", status=JobStatus.COMPLETED, language="zh")
         db.insert_job(job)
-        # Seed an upload dir so delete_upload_files has something to reclaim.
+        # Seed an upload dir so the sweep has something to reclaim.
         (settings.upload_dir / job.id).mkdir(parents=True)
         (settings.upload_dir / job.id / "source.mp3").write_bytes(b"x")
         # Backdate updated_at past the retention threshold.
@@ -2281,6 +2281,39 @@ class TestRetentionSweep:
         # Sweep 3: nothing left to do.
         removed_3 = _run_retention_sweep(settings.database_path, filestore, threshold_iso, limit)
         assert removed_3 == 0
+
+    def test_sweep_keeps_the_dir_of_a_job_retried_after_listing(self, db, filestore, settings, monkeypatch):
+        """A retry that claims a listed FAILED URL job before the sweep reaches
+        it keeps its upload dir: the worker may already be downloading into it."""
+        from datetime import UTC, datetime, timedelta
+
+        from whisper_ui.core.models import Job
+        from whisper_ui.storage.database import JobDatabase
+        from whisper_ui.web.app import _run_retention_sweep
+
+        now = datetime.now(UTC)
+        job = Job(filename="url", status=JobStatus.FAILED, source_url="https://www.youtube.com/watch?v=x")
+        db.insert_job(job)
+        db._conn.execute(
+            "UPDATE jobs SET updated_at = ? WHERE id = ?", ((now - timedelta(days=30)).isoformat(), job.id)
+        )
+        db._conn.commit()
+        download = filestore.prepare_upload_dir(job.id) / "video.mp4"
+        download.write_bytes(b"x")
+
+        listed = JobDatabase.list_reclaimable_upload_job_ids
+
+        def list_then_retry(self, threshold_iso):
+            ids = listed(self, threshold_iso)
+            assert db.try_claim_retry(job.id, None)  # the user's retry lands here
+            return ids
+
+        monkeypatch.setattr(JobDatabase, "list_reclaimable_upload_job_ids", list_then_retry)
+
+        removed = _run_retention_sweep(settings.database_path, filestore, (now - timedelta(days=7)).isoformat(), 50)
+
+        assert removed == 0
+        assert download.exists()
 
     def test_list_reclaimable_upload_job_ids_orders_oldest_first(self, db):
         """Stable ORDER BY makes the sweep deterministic; assert that

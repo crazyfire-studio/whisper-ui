@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -11,6 +12,7 @@ from whisper_ui.core.models import Job, JobStatus
 from whisper_ui.storage.migrations import init_db
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,17 @@ logger = logging.getLogger(__name__)
 # (~1MB at N=10K worst case), but worth knowing if the SELECT list
 # ever grows beyond a single column.
 _STALE_RECOVERY_LOG_SAMPLE = 20
+
+# Jobs whose upload directory the retention sweep may remove; the parameters
+# are the threshold, then COMPLETED and FAILED (see _reclaimable_params).
+_RECLAIMABLE_UPLOAD_WHERE = (
+    "updated_at < ? AND (status = ? OR (status = ? AND source_url IS NOT NULL AND source_url != ''))"
+)
+
+
+def _reclaimable_params(threshold_iso: str) -> tuple[str, str, str]:
+    return (threshold_iso, JobStatus.COMPLETED.value, JobStatus.FAILED.value)
+
 
 _JOB_COLUMNS = [
     "id",
@@ -489,9 +502,29 @@ class JobDatabase:
         multiple sweeps without needing a reclaim flag column.
         """
         rows = self._conn.execute(
-            "SELECT id FROM jobs WHERE updated_at < ? AND (status = ? OR "
-            "(status = ? AND source_url IS NOT NULL AND source_url != '')) "
-            "ORDER BY updated_at ASC, id ASC",
-            (threshold_iso, JobStatus.COMPLETED.value, JobStatus.FAILED.value),
+            f"SELECT id FROM jobs WHERE {_RECLAIMABLE_UPLOAD_WHERE} ORDER BY updated_at ASC, id ASC",
+            _reclaimable_params(threshold_iso),
         ).fetchall()
         return [row["id"] for row in rows]
+
+    @contextmanager
+    def upload_reclaim_lock(self, job_id: str, threshold_iso: str) -> Iterator[bool]:
+        """Hold the database write lock and yield whether *job_id* is still reclaimable.
+
+        The retention sweep lists ids first and removes directories later. In
+        between, a retry can claim a FAILED URL job and download into its
+        upload directory again. Re-check under the lock and move the directory
+        away inside the ``with`` block: a retry's claim is a write, so it waits
+        until the block ends and then downloads into a fresh directory.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute(
+                f"SELECT 1 FROM jobs WHERE id = ? AND {_RECLAIMABLE_UPLOAD_WHERE}",
+                (job_id, *_reclaimable_params(threshold_iso)),
+            ).fetchone()
+            yield row is not None
+        except BaseException:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
