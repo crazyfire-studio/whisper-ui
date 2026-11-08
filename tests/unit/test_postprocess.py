@@ -32,6 +32,24 @@ def test_postprocess_builds_segments():
     assert transcript.duration == 2.0
 
 
+def _texts_after_postprocess(*texts):
+    raw = {"segments": [{"start": float(i), "end": float(i + 1), "text": text} for i, text in enumerate(texts)]}
+    result = PostprocessStage().execute({"final_result": raw, "language": "zh", "duration": float(len(texts))})
+    return [s.text for s in result["transcript_result"].segments]
+
+
+def test_postprocess_collapses_a_long_run_of_one_character():
+    assert _texts_after_postprocess("呵" * 20, "好好好好好好好好的") == ["呵呵呵", "好好好的"]
+
+
+def test_postprocess_keeps_runs_of_up_to_seven_characters():
+    assert _texts_after_postprocess("哈" * 7, "對對對就是這樣") == ["哈" * 7, "對對對就是這樣"]
+
+
+def test_postprocess_keeps_digit_runs():
+    assert _texts_after_postprocess("一億是100000000") == ["一億是100000000"]
+
+
 def test_postprocess_skips_conversion_for_non_zh():
     """convert_to_traditional=True should have no effect when language is not zh."""
     stage = PostprocessStage(convert_to_traditional=True)
