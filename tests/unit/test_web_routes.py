@@ -6,6 +6,7 @@ import pytest
 
 from tests.conftest import authed_test_client, flash_messages
 from tests.helpers.store import list_jobs, save_upload
+from whisper_ui.core.constants import MULTIPART_HEADROOM_BYTES
 from whisper_ui.core.models import Job, JobStatus, Segment, TranscriptResult
 from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.app import create_app
@@ -1685,8 +1686,10 @@ class TestUploadRequestSizeLimit:
 
     @pytest.fixture
     def small_cap_app(self, app, settings):
-        # model_copy skips validation, so a cap this small is allowed here.
-        capped = settings.model_copy(update={"max_upload_size": 500, "max_upload_request_size": 1000})
+        # The smallest request cap create_app accepts for a 500-byte file cap.
+        capped = settings.model_copy(
+            update={"max_upload_size": 500, "max_upload_request_size": 500 + MULTIPART_HEADROOM_BYTES}
+        )
         with patch("whisper_ui.core.config.get_settings", return_value=capped):
             application = create_app()
         application.state = app.state
@@ -1694,17 +1697,18 @@ class TestUploadRequestSizeLimit:
 
     def test_oversized_batch_gets_413_with_headers(self, small_cap_app, test_user):
         client = authed_test_client(small_cap_app, test_user)
-        files = [("files", ("a.mp3", b"x" * 600, "audio/mpeg")), ("files", ("b.mp3", b"x" * 600, "audio/mpeg"))]
+        half = b"x" * (MULTIPART_HEADROOM_BYTES // 2 + 1000)
+        files = [("files", ("a.mp3", half, "audio/mpeg")), ("files", ("b.mp3", half, "audio/mpeg"))]
         resp = client.post("/upload", data={"language": "zh"}, files=files, follow_redirects=False)
         assert resp.status_code == 413
-        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 KB")
+        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 MB")
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["X-Request-ID"]
 
     def test_anonymous_oversized_upload_is_sent_to_login_first(self, small_cap_app):
         from fastapi.testclient import TestClient
 
-        files = [("files", ("a.mp3", b"x" * 2000, "audio/mpeg"))]
+        files = [("files", ("a.mp3", b"x" * (MULTIPART_HEADROOM_BYTES + 1000), "audio/mpeg"))]
         resp = TestClient(small_cap_app).post(
             "/upload", files=files, headers={"origin": "http://testserver"}, follow_redirects=False
         )

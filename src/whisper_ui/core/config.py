@@ -165,7 +165,7 @@ class Settings(BaseSettings):
     # multipart request, and Starlette spools all of it to disk before the
     # per-file cap above is checked, so this bounds what one request can write.
     # Must leave room for one file at max_upload_size plus the multipart framing
-    # (MULTIPART_HEADROOM_BYTES), or a file at the per-file cap could never fit.
+    # (MULTIPART_HEADROOM_BYTES); the web tier checks this at startup.
     max_upload_request_size: int = 10 * 1024 * 1024 * 1024  # 10 GB
     # Optional retention: when > 0, the web app's background loop reclaims
     # the upload directory of any COMPLETED job, and of any FAILED URL job,
@@ -274,16 +274,20 @@ class Settings(BaseSettings):
             raise ValueError("whispercpp_vad_model must be set when whispercpp_vad is enabled")
         return self
 
-    @model_validator(mode="after")
-    def _validate_upload_request_size(self) -> Settings:
-        """A request cap that cannot hold one file at the per-file cap would refuse files the route accepts."""
+    def validate_upload_request_size(self) -> None:
+        """Raise ValueError if the request cap cannot hold one file at the per-file cap.
+
+        Such a cap would refuse files the upload route accepts. Only the web
+        tier enforces the request cap, so only it calls this at startup. It is
+        not a model validator: the workers load these Settings too, and compose
+        gives them MAX_UPLOAD_SIZE but not MAX_UPLOAD_REQUEST_SIZE.
+        """
         minimum = self.max_upload_size + MULTIPART_HEADROOM_BYTES
         if self.max_upload_request_size < minimum:
             raise ValueError(
                 f"max_upload_request_size ({self.max_upload_request_size}) must be >= max_upload_size "
                 f"({self.max_upload_size}) + {MULTIPART_HEADROOM_BYTES} bytes of multipart framing = {minimum}"
             )
-        return self
 
     @field_validator("ollama_base_url", mode="before")
     @classmethod

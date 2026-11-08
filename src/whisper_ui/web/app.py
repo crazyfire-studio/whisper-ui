@@ -270,6 +270,7 @@ def create_app() -> FastAPI:
     setup_logging()
     settings = get_settings()
     setup_logging(log_level=settings.log_level, log_json=settings.log_json)
+    settings.validate_upload_request_size()
     # No /docs, /redoc or /openapi.json: the app serves HTML for a browser,
     # and the schema would list every route, form field and parameter to any
     # signed-in user (registration is open by default).
