@@ -217,7 +217,14 @@
     <h2 class="text-sm font-medium opacity-80 mb-3">{{ labels.UPLOAD_SECTION_BASIC }}</h2>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <fieldset class="fieldset w-full">
-        <legend class="fieldset-legend text-sm">{{ labels.UPLOAD_LANGUAGE }}</legend>
+        <legend class="fieldset-legend text-sm">
+          <span class="inline-flex items-center gap-1">
+            {{ labels.UPLOAD_LANGUAGE }}
+            <span class="tooltip tooltip-right" data-tip="{{ labels.UPLOAD_LANGUAGE_HELP }}">
+              <span class="text-xs opacity-60 cursor-help" tabindex="0" aria-label="{{ labels.UPLOAD_INFOTIP_LABEL }}">ⓘ</span>
+            </span>
+          </span>
+        </legend>
         <select name="language" class="select w-full">
           {% for code in supported_languages %}
           <option value="{{ code }}" {% if code == default_language %}selected{% endif %}>

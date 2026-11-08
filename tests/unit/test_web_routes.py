@@ -1715,6 +1715,10 @@ class TestUploadRequestSizeLimit:
         assert resp.status_code == 302
         assert resp.headers["location"].startswith("/login")
 
+    def test_upload_page_explains_when_to_pick_auto_detect(self, client):
+        resp = client.get("/upload")
+        assert f'data-tip="{ui_labels.UPLOAD_LANGUAGE_HELP}"' in resp.text
+
     def test_upload_page_exposes_both_caps_to_the_form(self, client, settings):
         resp = client.get("/upload")
         assert f"maxFileSize: {settings.max_upload_size}," in resp.text
