@@ -7,6 +7,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-08
+
+Fixes from a pre-release review of security, correctness and operations, Taiwan
+wording for Chinese transcripts, and download failures explained to the user.
+The major version is for the two deploy changes below: an existing `.env` may
+need editing before the stack starts.
+
 ### Deploy notes
 
 - **BREAKING: `REDIS_PASSWORD` is required.** Every `docker compose` command
@@ -20,6 +27,89 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   whole batch, and defaults to 10 GiB. The frontend refuses to start unless
   it is at least `MAX_UPLOAD_SIZE` + 1 MiB, so a deployment with a larger
   file cap has to raise it in `.env` too. Other deployments need no change.
+- **Rebuild or re-pull every image** for the security fixes below.
+
+### Security
+
+- The compose stack no longer starts without `REDIS_PASSWORD` (#250).
+- `/docs`, `/redoc` and `/openapi.json` now return 404; they listed every route
+  and form field to any signed-in user (#255).
+- The frontend receives a placeholder instead of `HF_TOKEN`; it only needs to
+  know whether a token is set (#255).
+- Share tokens are masked in the access log, keeping their last four
+  characters (#255).
+- Every log line, text or JSON, collapses control and line-separator
+  characters, so user-controlled text cannot forge a log line (#248).
+- One upload request is capped by `MAX_UPLOAD_REQUEST_SIZE` before its body is
+  spooled to disk, and the upload page checks both caps before sending (#245,
+  #265).
+- Google Drive downloads stop at `MAX_UPLOAD_SIZE` while downloading, get a
+  30 s network timeout, and leave no `.part` file behind (#246).
+- 500 responses carry the request id and the security headers (#255).
+- dnspython 2.8.0 → 2.9.0 (GHSA-45c3-73f7-pv4m) (#223); pydantic 2.14.1 →
+  2.14.2 (GHSA-qpmf-fgh3-ff25, GHSA-3r8g-cqwr-jr29) (#264).
+- In the worker images: pillow 12.2.0 → 13.0.0 (22 advisories), aiohttp
+  3.13.5 → 3.14.5, filelock 3.29.0 → 4.2.9, multidict, fsspec,
+  pytorch-lightning and soupsieve (#243); setuptools 82.0.1 → 84.2.1
+  (GHSA-h35f-9h28-mq5c, GHSA-xmj3-9gf7-h52w) (#231).
+
+### Added
+
+- A failed download tells the user why: X restrictions, a live or upcoming
+  stream, the duration or size cap, a Drive file that cannot be fetched or is
+  not audio or video, or a source that keeps failing. Unclassified errors keep
+  the generic message (#247).
+- `MAX_UPLOAD_REQUEST_SIZE` (default 10 GiB), see the deploy notes (#245).
+
+### Changed
+
+- Chinese transcripts are converted with OpenCC `s2twp`, which uses Taiwan
+  vocabulary as well as Taiwan character forms (#253).
+- An LLM correction that rewrites a segment, rather than fixing typos, is
+  discarded and the original segment kept: an empty result, byte-fallback
+  tokens, or a change larger than the calibrated bounds (#249).
+- Failed RQ sub-jobs expire after 7 days instead of RQ's default of a year;
+  the bundled Redis runs with `noeviction` (#252).
+- Upload retention also reclaims the media of failed URL jobs, which a retry
+  downloads again (#252).
+- The frontend no longer probes audio duration; the worker sets the stage
+  timeouts after preprocessing (#251).
+- Dependencies bumped: transformers 5.20.2 → 5.22.1, ctranslate2 4.8.0 →
+  4.8.5, pyannote-audio 4.0.4 → 4.0.7, omegaconf 2.3.1 → 2.4.0, pandas
+  3.0.6 → 3.1.1, gdown 6.4.2 → 6.5.1, yt-dlp 2026.8.19 → 2026.10.26,
+  fastapi 0.142.2 → 0.162.0, pydantic-settings 2.16.0 → 2.16.2, redis
+  8.0.0 → 8.1.0, prometheus-client 0.25.0 → 0.26.0. The worker updates were
+  smoke-tested in the CPU and CUDA images: transcription, alignment,
+  diarization and a Google Drive download.
+
+### Fixed
+
+- Creating a share link no longer returns 500. The confirmation went into a
+  response header, which cannot carry Chinese text (#242).
+- SRT and VTT timestamps no longer come out one millisecond early for about
+  half of all values (#252).
+- Registration and the admin password routes hash passwords off the event
+  loop, so they no longer stall other requests (#252).
+- Retention no longer removes the upload directory of a job that a retry has
+  just re-queued (#266).
+
+### Documentation
+
+- The README, `.env.example` and the 401 message point at
+  `pyannote/speaker-diarization-community-1`, the model whisperx 3.8.6 loads,
+  instead of `speaker-diarization-3.1` (#254).
+- The README describes how the client IP is taken from `X-Forwarded-For`
+  (`TRUSTED_PROXY_COUNT`), `SECURITY.md` describes the CSP that is set, and the
+  v1 → v2 upgrade steps are removed (#254).
+
+### Development
+
+- A weekly and per-change pip-audit job covers the worker extras, which the
+  main audit does not (#244).
+- A pushed tag publishes a GitHub Release with that version's notes (#214).
+- Dependabot groups minor and patch updates (#224).
+- CI pins the visual tests to `ubuntu-24.04` and pre-commit's Node to 24.22.2
+  after upstream changes broke both (#256).
 
 ## [2.22.0] - 2026-10-23
 
@@ -1125,7 +1215,8 @@ Error` JSON body while logging the full traceback, so an
   classification, missing-job handling) are now covered by unit tests
   in `test_pipeline_dispatcher.py` and `test_stage_tasks.py`.
 
-[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v2.22.0...HEAD
+[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.0.0
 [2.22.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v2.22.0
 [2.21.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.21.0
 [2.18.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.18.0
