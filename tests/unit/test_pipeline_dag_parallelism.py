@@ -11,7 +11,6 @@ failure cancellation).
 
 from __future__ import annotations
 
-import contextlib
 import threading
 from unittest.mock import MagicMock
 
@@ -19,6 +18,7 @@ import fakeredis
 import pytest
 from rq import SimpleWorker
 from rq.job import Job as RQJob
+from rq.job import JobStatus as RQJobStatus
 
 from tests.helpers.dag_harness import fake_runtime_factory as _fake_runtime_factory
 from tests.helpers.dag_harness import install_runtime as _install_runtime
@@ -190,6 +190,10 @@ def test_stage_failure_cancels_downstream_and_marks_job_failed(monkeypatch, fake
         )
 
         enqueue_pipeline(job, redis=fake_redis, settings=fake_settings, filestore=filestore)
+        # finalize_failure clears this generation's sub-job set and bumps the
+        # generation, so record the ids before the workers run.
+        gen = pipeline_dispatcher._current_generation(fake_redis, job.id)
+        sub_ids = pipeline_dispatcher._load_subjob_ids(fake_redis, job.id, gen)
         _drain_queues(fake_redis)
 
     assert job.status == JobStatus.FAILED
@@ -201,13 +205,23 @@ def test_stage_failure_cancels_downstream_and_marks_job_failed(monkeypatch, fake
     assert job.error == ui_labels.JOBS_STAGE_FAILED_GENERIC
     assert "kaboom" not in job.error
 
-    # Every non-failing sub-job should end up either cancelled or never run.
-    gen = pipeline_dispatcher._current_generation(fake_redis, job.id)
-    if gen is not None:
-        for sub_id in pipeline_dispatcher._load_subjob_ids(fake_redis, job.id, gen):
-            with contextlib.suppress(Exception):
-                sub = RQJob.fetch(sub_id, connection=fake_redis)
-                assert not sub.is_finished, f"sub-job {sub.func_name} should not have finished after transcribe failure"
+    # The failing stage is FAILED, every stage after it was cancelled before it
+    # ran, and nothing is left waiting in a queue or a registry.
+    statuses = {}
+    for sub_id in sub_ids:
+        sub = RQJob.fetch(sub_id, connection=fake_redis)
+        statuses[sub.meta["stage"]] = sub.get_status(refresh=True)
+    assert statuses["run_transcribe_align"] == RQJobStatus.FAILED
+    assert statuses["run_assign_speakers"] == RQJobStatus.CANCELED
+    assert statuses["run_postprocess"] == RQJobStatus.CANCELED
+    pending = {
+        RQJobStatus.QUEUED,
+        RQJobStatus.DEFERRED,
+        RQJobStatus.READY_TO_ENQUEUE,
+        RQJobStatus.SCHEDULED,
+        RQJobStatus.STARTED,
+    }
+    assert not {stage for stage, status in statuses.items() if status in pending}, statuses
 
 
 def test_retry_progress_starts_fresh_after_stale_writer(fake_redis):
