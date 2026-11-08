@@ -177,12 +177,18 @@ class TestCliFlags:
         cmd = self._run_and_capture(WhisperCppTranscribeStage())
         assert "--vad" in cmd
         assert cmd[cmd.index("-vm") + 1] == "/m/vad.bin"
+        assert cmd[cmd.index("-vt") + 1] == "0.5"
         assert cmd[cmd.index("-mc") + 1] == "0"
 
     def test_vad_disabled_omits_vad_flags(self):
         cmd = self._run_and_capture(WhisperCppTranscribeStage(vad=False))
         assert "--vad" not in cmd
         assert "-vm" not in cmd
+        assert "-vt" not in cmd
+
+    def test_vad_threshold_reaches_the_cli(self):
+        cmd = self._run_and_capture(WhisperCppTranscribeStage(vad_threshold=0.3))
+        assert cmd[cmd.index("-vt") + 1] == "0.3"
 
     def test_negative_max_context_keeps_cli_default(self):
         cmd = self._run_and_capture(WhisperCppTranscribeStage(max_context=-1))
@@ -277,6 +283,7 @@ class TestBackendSelection:
         runtime.settings.whispercpp_threads = 0
         runtime.settings.whispercpp_vad = True
         runtime.settings.whispercpp_vad_model = "ggml-silero-v5.1.2.bin"
+        runtime.settings.whispercpp_vad_threshold = 0.5
         runtime.settings.whispercpp_max_context = 0
         runtime.settings.compute_type = "int8_float16"
         runtime.settings.device = "rocm"
@@ -294,8 +301,10 @@ class TestBackendSelection:
         runtime = self._runtime("whispercpp")
         runtime.settings.whispercpp_vad = False
         runtime.settings.whispercpp_max_context = -1
+        runtime.settings.whispercpp_vad_threshold = 0.3
         stage = _build_transcribe_stage(job, runtime, "cuda")
         assert stage._vad is False
+        assert stage._vad_threshold == 0.3
         assert stage._vad_model == "ggml-silero-v5.1.2.bin"
         assert stage._max_context == -1
 
@@ -322,6 +331,12 @@ class TestWhispercppVadConfig:
         assert settings.whispercpp_vad is True
         assert settings.whispercpp_vad_model == "ggml-silero-v5.1.2.bin"
         assert settings.whispercpp_max_context == 0
+        assert settings.whispercpp_vad_threshold == 0.5
+
+    @pytest.mark.parametrize("value", [-0.1, 1.1])
+    def test_rejects_a_vad_threshold_outside_zero_to_one(self, value):
+        with pytest.raises(ValidationError, match="whispercpp_vad_threshold"):
+            Settings(whispercpp_vad_threshold=value, _env_file=None)
 
     def test_env_overrides(self, monkeypatch):
         monkeypatch.setenv("WHISPERCPP_VAD", "false")
