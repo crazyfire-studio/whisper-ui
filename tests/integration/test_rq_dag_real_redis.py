@@ -16,6 +16,7 @@ that holds keys, so a mistyped URL cannot wipe real data.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import TYPE_CHECKING
 
@@ -84,3 +85,143 @@ def test_stage_tasks_see_their_own_rq_job(real_redis):
 
     assert generation_job.latest_result().return_value == 7
     assert timeout_job.latest_result().return_value == 1234
+
+
+def _drain_like_production(conn) -> None:
+    """Run every queue the way compose does: the GPU queue on ``SimpleWorker``,
+    the io, cpu and llm queues on RQ's default forking ``Worker``."""
+    from rq import Queue, SimpleWorker, Worker
+
+    from whisper_ui.core.constants import WORKER_QUEUE_CPU, WORKER_QUEUE_GPU, WORKER_QUEUE_IO, WORKER_QUEUE_LLM
+
+    queues = {
+        name: Queue(name, connection=conn)
+        for name in (WORKER_QUEUE_IO, WORKER_QUEUE_GPU, WORKER_QUEUE_CPU, WORKER_QUEUE_LLM)
+    }
+    for _ in range(50):
+        progressed = False
+        for name, queue in queues.items():
+            if queue.count == 0:
+                continue
+            worker_class = SimpleWorker if name == WORKER_QUEUE_GPU else Worker
+            worker_class([queue], connection=conn).work(burst=True, with_scheduler=False)
+            progressed = True
+        if not progressed:
+            break
+
+
+def _record_callbacks(monkeypatch, conn) -> None:
+    """Leave a Redis key when a pipeline callback runs.
+
+    A forking worker runs the job, and its callbacks, in a child process, so the
+    in-memory job and database stand-ins the unit scenarios assert on never
+    change in the test process. Redis is shared, so the callbacks mark it.
+    """
+    from whisper_ui.worker import pipeline_dispatcher
+
+    for name in ("finalize_success", "finalize_failure"):
+        original = getattr(pipeline_dispatcher, name)
+
+        def wrapper(rq_job, *args, _original=original, _name=name):
+            conn.set(f"test:{_name}", rq_job.meta["parent_job_id"])
+            return _original(rq_job, *args)
+
+        monkeypatch.setattr(pipeline_dispatcher, name, wrapper)
+
+
+def _stage_statuses(conn, sub_ids) -> dict:
+    from rq.job import Job as RQJob
+
+    return {
+        RQJob.fetch(i, connection=conn).meta["stage"]: RQJob.fetch(i, connection=conn).get_status(refresh=True)
+        for i in sub_ids
+    }
+
+
+def _enqueue_upload_job(conn, fake_settings, tmp_path, job_id):  # noqa: F811
+    from unittest.mock import MagicMock
+
+    from whisper_ui.core.models import Job, JobStatus
+    from whisper_ui.worker import pipeline_dispatcher
+    from whisper_ui.worker.pipeline_dispatcher import enqueue_pipeline
+
+    job = Job(
+        id=job_id,
+        filename="m.mp3",
+        filepath=str(tmp_path / "m.mp3"),
+        status=JobStatus.QUEUED,
+        duration=60.0,
+        enable_diarization=True,
+    )
+    filestore = MagicMock()
+    filestore.prepare_upload_path.return_value = tmp_path / "subdir" / "m.mp3"
+    filestore.save_result.return_value = tmp_path / "result.json"
+    enqueue_pipeline(job, redis=conn, settings=fake_settings, filestore=filestore)
+    gen = pipeline_dispatcher._current_generation(conn, job.id)
+    return job, filestore, pipeline_dispatcher._load_subjob_ids(conn, job.id, gen)
+
+
+def test_dag_completes_on_production_worker_classes(monkeypatch, real_redis, fake_settings, tmp_path):  # noqa: F811
+    """io (preprocess) -> gpu (transcribe, diarize) -> cpu (assign, postprocess),
+    with the io and cpu stages in forked work horses."""
+    from unittest.mock import MagicMock
+
+    from rq.job import JobStatus as RQJobStatus
+
+    from tests.helpers.dag_harness import fake_runtime_factory, install_runtime, stub_stages
+
+    _record_callbacks(monkeypatch, real_redis)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(stub_stages(monkeypatch, []))
+        db = MagicMock()
+        job, filestore, sub_ids = _enqueue_upload_job(real_redis, fake_settings, tmp_path, "job-prod-workers")
+        db.get_job.return_value = job
+        _, builder = stack.enter_context(fake_runtime_factory(real_redis, fake_settings, db, filestore))
+        install_runtime(monkeypatch, builder)
+        _drain_like_production(real_redis)
+
+    statuses = _stage_statuses(real_redis, sub_ids)
+    assert set(statuses.values()) == {RQJobStatus.FINISHED}, statuses
+    assert real_redis.get("test:finalize_success") == b"job-prod-workers"
+    assert real_redis.get("test:finalize_failure") is None
+
+
+def test_gpu_failure_cancels_forked_stages(monkeypatch, real_redis, fake_settings, tmp_path):  # noqa: F811
+    """A failure in the SimpleWorker's transcribe stage cancels the cpu stages
+    that the forking workers would have run."""
+    from unittest.mock import MagicMock
+
+    from rq.job import JobStatus as RQJobStatus
+
+    from tests.helpers.dag_harness import fake_runtime_factory, install_runtime, stub_stages
+
+    class _ExplodingTranscribe:
+        name = "transcribe"
+
+        def execute(self, context, on_progress=None):
+            raise RuntimeError("gpu kaboom")
+
+        def cleanup(self):
+            pass
+
+    _record_callbacks(monkeypatch, real_redis)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(stub_stages(monkeypatch, []))
+        monkeypatch.setattr("whisper_ui.worker.stage_tasks.TranscribeStage", lambda *a, **kw: _ExplodingTranscribe())
+        db = MagicMock()
+        job, filestore, sub_ids = _enqueue_upload_job(real_redis, fake_settings, tmp_path, "job-prod-fail")
+        db.get_job.return_value = job
+        _, builder = stack.enter_context(fake_runtime_factory(real_redis, fake_settings, db, filestore))
+        install_runtime(monkeypatch, builder)
+        _drain_like_production(real_redis)
+
+    statuses = _stage_statuses(real_redis, sub_ids)
+    # cancel_remaining_subjobs cancels every sibling, so preprocess, which had
+    # already finished in a forked horse, ends up CANCELED as well.
+    assert statuses["run_transcribe_align"] == RQJobStatus.FAILED
+    assert statuses["run_assign_speakers"] == RQJobStatus.CANCELED
+    assert statuses["run_postprocess"] == RQJobStatus.CANCELED
+    pending = {RQJobStatus.QUEUED, RQJobStatus.DEFERRED, RQJobStatus.READY_TO_ENQUEUE, RQJobStatus.STARTED}
+    assert not {stage for stage, status in statuses.items() if status in pending}, statuses
+    assert real_redis.get("test:finalize_failure") == b"job-prod-fail"
+    assert real_redis.get("test:finalize_success") is None
