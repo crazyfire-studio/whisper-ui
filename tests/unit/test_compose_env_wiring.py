@@ -118,6 +118,36 @@ class TestTheDownloadCapIsReachable:
         assert "YOUTUBE_MAX_DOWNLOAD_SIZE" in anchor.group(1)
 
 
+def _services_with_only_the_file_cap() -> list[str]:
+    return sorted(
+        name
+        for name, env in _service_environments().items()
+        if "MAX_UPLOAD_SIZE" in env and "MAX_UPLOAD_REQUEST_SIZE" not in env
+    )
+
+
+class TestTheUploadCapsReachTheirServices:
+    """The file cap reaches the workers; the request cap only the frontend.
+
+    The workers enforce the file cap on Drive downloads and never read the
+    request cap, so compose leaves it out of their environment. That is why
+    the check comparing the two runs only in the web tier
+    (``Settings.validate_upload_request_size``): as a Settings model
+    validator it stopped every worker once MAX_UPLOAD_SIZE passed the default
+    request cap. ``test_config`` covers Settings loading with that file cap.
+    """
+
+    def test_the_workers_receive_the_file_cap_alone(self) -> None:
+        assert {"worker-cpu", "worker-gpu", "worker-rocm", "worker-io", "worker-llm"} <= set(
+            _services_with_only_the_file_cap()
+        )
+
+    def test_the_frontend_receives_both_caps(self) -> None:
+        frontend = _service_environments()["frontend"]
+
+        assert {"MAX_UPLOAD_SIZE", "MAX_UPLOAD_REQUEST_SIZE"} <= frontend.keys()
+
+
 def test_frontend_gets_a_placeholder_not_the_hf_token():
     # The frontend only checks whether a token exists; the workers need it.
     envs = _service_environments()

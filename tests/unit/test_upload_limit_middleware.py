@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import pytest
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.testclient import TestClient
 
@@ -55,6 +56,18 @@ def _chunks(body: bytes, size: int = 300):
 
 
 _MULTIPART_HEADERS = {"content-type": f"multipart/form-data; boundary={_BOUNDARY}"}
+
+
+def test_create_app_refuses_a_request_cap_that_cannot_hold_one_file(monkeypatch):
+    from whisper_ui.core.config import get_settings
+    from whisper_ui.web.app import create_app
+
+    monkeypatch.setenv("MAX_UPLOAD_SIZE", "2000")
+    monkeypatch.setenv("MAX_UPLOAD_REQUEST_SIZE", "2000")
+    get_settings.cache_clear()
+
+    with pytest.raises(ValueError, match="max_upload_request_size"):
+        create_app()
 
 
 def test_request_under_limit_reaches_the_route():
