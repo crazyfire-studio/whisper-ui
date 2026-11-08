@@ -15,6 +15,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   already sets it needs no change. The bundled Redis holds pickled RQ jobs,
   so running it without authentication let anyone who could reach it run
   code in the workers.
+- **BREAKING for `MAX_UPLOAD_SIZE` above 10 GiB − 1 MiB: new
+  `MAX_UPLOAD_REQUEST_SIZE`.** It caps one upload request, which carries a
+  whole batch, and defaults to 10 GiB. The frontend refuses to start unless
+  it is at least `MAX_UPLOAD_SIZE` + 1 MiB, so a deployment with a larger
+  file cap has to raise it in `.env` too. Other deployments need no change.
 
 ## [2.22.0] - 2026-10-23
 
