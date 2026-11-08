@@ -119,6 +119,27 @@ def test_setup_logging_pins_rq_loggers_to_warning(monkeypatch):
     assert logging.getLogger("uvicorn.access").getEffectiveLevel() == logging.WARNING
 
 
+def test_rq_worker_logs_keep_reaching_our_handler(monkeypatch):
+    """RQ 3 turns propagation off on loggers it gives its own handlers.
+
+    It only adds them when no handler up the hierarchy would catch the record.
+    The worker calls setup_logging before ``rq.cli.main``, so the root handler
+    is there and ``rq.worker`` records keep going through our formatter.
+    """
+    from rq.logutils import setup_loghandlers
+
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    setup_logging()
+    worker_logger = logging.getLogger("rq.worker")
+    monkeypatch.setattr(worker_logger, "handlers", [])
+    monkeypatch.setattr(worker_logger, "propagate", True)
+
+    setup_loghandlers(level="INFO")
+
+    assert worker_logger.handlers == []
+    assert worker_logger.propagate is True
+
+
 def test_setup_logging_is_idempotent(monkeypatch):
     """Calling setup_logging twice must not double-attach handlers."""
     monkeypatch.setenv("LOG_LEVEL", "INFO")
