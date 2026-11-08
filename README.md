@@ -109,13 +109,14 @@ looping subtitle-style hallucinations) and cross-window text conditioning is
 disabled so a bad window cannot contaminate the rest of the transcript.
 Settings specific to this backend:
 
-| Variable                 | Default                  | Description                                                              |
-| ------------------------ | ------------------------ | ------------------------------------------------------------------------ |
-| `WHISPERCPP_BINARY`      | `whisper-cli`            | whisper.cpp CLI binary name or path inside the worker image              |
-| `WHISPERCPP_THREADS`     | `0`                      | CPU threads for whisper-cli (`0` = let it decide)                        |
-| `WHISPERCPP_VAD`         | `true`                   | Silero VAD pre-segmentation (the main anti-hallucination guard)          |
-| `WHISPERCPP_VAD_MODEL`   | `ggml-silero-v5.1.2.bin` | VAD model file; auto-downloaded and cached on the model-cache volume     |
-| `WHISPERCPP_MAX_CONTEXT` | `0`                      | Text-context tokens carried across windows (`0` = off, `-1` = unlimited) |
+| Variable                   | Default                  | Description                                                                   |
+| -------------------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| `WHISPERCPP_BINARY`        | `whisper-cli`            | whisper.cpp CLI binary name or path inside the worker image                   |
+| `WHISPERCPP_THREADS`       | `0`                      | CPU threads for whisper-cli (`0` = let it decide)                             |
+| `WHISPERCPP_VAD`           | `true`                   | Silero VAD pre-segmentation (the main anti-hallucination guard)               |
+| `WHISPERCPP_VAD_MODEL`     | `ggml-silero-v5.1.2.bin` | VAD model file; auto-downloaded and cached on the model-cache volume          |
+| `WHISPERCPP_VAD_THRESHOLD` | `0.5`                    | Speech probability VAD keeps (0-1); lower keeps quieter speech and more noise |
+| `WHISPERCPP_MAX_CONTEXT`   | `0`                      | Text-context tokens carried across windows (`0` = off, `-1` = unlimited)      |
 
 Open <http://localhost:8080> in your browser.
 

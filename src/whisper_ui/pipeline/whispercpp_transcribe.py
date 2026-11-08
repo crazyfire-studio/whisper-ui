@@ -55,6 +55,7 @@ class WhisperCppTranscribeStage:
         device: str = "rocm",
         vad: bool = True,
         vad_model: str = "ggml-silero-v5.1.2.bin",
+        vad_threshold: float = 0.5,
         max_context: int = 0,
     ) -> None:
         # ``device`` is accepted for interface symmetry with TranscribeStage;
@@ -67,6 +68,7 @@ class WhisperCppTranscribeStage:
         self._device = device
         self._vad = vad
         self._vad_model = vad_model
+        self._vad_threshold = vad_threshold
         self._max_context = max_context
 
     @property
@@ -180,7 +182,7 @@ class WhisperCppTranscribeStage:
             if self._threads and self._threads > 0:
                 cmd += ["-t", str(self._threads)]
             if vad_model_path is not None:
-                cmd += ["--vad", "-vm", vad_model_path]
+                cmd += ["--vad", "-vm", vad_model_path, "-vt", str(self._vad_threshold)]
             if self._max_context >= 0:
                 cmd += ["-mc", str(self._max_context)]
 

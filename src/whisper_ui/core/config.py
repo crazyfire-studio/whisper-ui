@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # by the pinned whisper.cpp (WHISPER_CPP_REF in Dockerfile.worker.rocm);
     # validated against the current pin, so revalidate when bumping either.
     whispercpp_vad_model: str = "ggml-silero-v5.1.2.bin"
+    # Speech probability above which Silero marks a frame as speech (whisper-cli
+    # ``-vt``). 0.5 is whisper.cpp's own default. A lower value keeps quieter
+    # speech, such as far-field meeting audio, at the risk of passing noise on.
+    whispercpp_vad_threshold: float = 0.5
     # Maximum text-context tokens carried across 30 s decode windows
     # (whisper-cli ``-mc``). 0 disables conditioning entirely — parity with
     # the whisperx batched pipeline and the guard that stops a hallucination
@@ -258,6 +262,14 @@ class Settings(BaseSettings):
         if v_lower not in allowed:
             raise ValueError(f"transcribe_backend must be one of {sorted(allowed)}, got {v!r}")
         return v_lower
+
+    @field_validator("whispercpp_vad_threshold")
+    @classmethod
+    def _validate_whispercpp_vad_threshold(cls, v: float) -> float:
+        """Silero outputs a probability, so a threshold outside [0, 1] cannot work."""
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(f"whispercpp_vad_threshold must be within [0.0, 1.0], got {v}")
+        return v
 
     @field_validator("whispercpp_max_context")
     @classmethod
