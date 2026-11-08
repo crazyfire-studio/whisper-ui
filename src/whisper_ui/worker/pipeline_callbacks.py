@@ -146,8 +146,10 @@ def cancel_remaining_subjobs(
        profile) SIGKILLs the horse process immediately, while
        ``SimpleWorker`` (cuda / rocm profiles, no child process) treats
        the resulting ``kill_horse`` as a documented no-op — the running
-       stage keeps executing to completion. Verified against rq 2.9.1
-       (``Worker.kill_horse`` vs ``BaseWorker.kill_horse``).
+       stage keeps executing to completion. Verified against rq 3.0.0
+       (``Worker.kill_horse`` vs ``BaseWorker.kill_horse``); RQ 3's new
+       ``send_stop_execution_command`` ends in the same ``kill_horse``, so
+       it would not stop a SimpleWorker stage either.
     2. **Still queued / deferred.** ``send_stop_job_command`` is a no-op
        for jobs that have not started, so it is followed by ``cancel()``
        to evict them from the queue registry. Downstream dependent jobs
