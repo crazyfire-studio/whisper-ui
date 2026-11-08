@@ -49,6 +49,9 @@ UPLOAD_DESCRIPTION = "上傳音訊或影片檔案進行語音轉錄。"
 UPLOAD_SUPPORTED_FORMATS = "支援格式：{formats}"
 UPLOAD_CHOOSE_FILE = "選擇檔案"
 UPLOAD_LANGUAGE = "語言"
+UPLOAD_LANGUAGE_HELP = (
+    "以中文為主、只夾雜英文詞時選「中文」；整句中英交替（一句中文、一句英文）時選「自動偵測」，辨識較準"
+)
 UPLOAD_MODEL = "模型"
 UPLOAD_NUM_SPEAKERS = "說話者人數（0 = 自動偵測）"
 UPLOAD_ENABLE_DIARIZATION = "啟用說話者分離"
