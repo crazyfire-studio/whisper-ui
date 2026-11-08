@@ -267,21 +267,27 @@ def test_llm_correction_available_reflects_ollama_base_url(tmp_path):
     assert _make_settings(tmp_path, ollama_base_url="http://ollama:11434").llm_correction_available is True
 
 
-class TestUploadRequestSizeValidator:
+class TestValidateUploadRequestSize:
     def test_default_request_cap_covers_the_default_file_cap(self, tmp_path):
-        settings = _make_settings(tmp_path)
-        assert settings.max_upload_request_size >= settings.max_upload_size
+        _make_settings(tmp_path).validate_upload_request_size()
 
     def test_request_cap_below_file_cap_is_rejected(self, tmp_path):
-        with pytest.raises(ValidationError, match="max_upload_request_size"):
-            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=1000)
+        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=1000)
+        with pytest.raises(ValueError, match="max_upload_request_size"):
+            settings.validate_upload_request_size()
 
     def test_request_cap_equal_to_file_cap_is_rejected(self, tmp_path):
         # The multipart framing would push a file at the per-file cap over it.
-        with pytest.raises(ValidationError, match="multipart framing"):
-            _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
+        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=2000)
+        with pytest.raises(ValueError, match="multipart framing"):
+            settings.validate_upload_request_size()
 
     def test_request_cap_with_room_for_the_framing_is_accepted(self, tmp_path):
         size = 2000 + MULTIPART_HEADROOM_BYTES
-        settings = _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=size)
-        assert settings.max_upload_request_size == size
+        _make_settings(tmp_path, max_upload_size=2000, max_upload_request_size=size).validate_upload_request_size()
+
+    def test_file_cap_above_the_default_request_cap_still_loads(self, tmp_path):
+        # A worker gets MAX_UPLOAD_SIZE but not MAX_UPLOAD_REQUEST_SIZE, so loading
+        # Settings must not compare the two (this raised before the check moved).
+        settings = _make_settings(tmp_path, max_upload_size=12 * 1024**3)
+        assert settings.max_upload_size == 12 * 1024**3

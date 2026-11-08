@@ -6,6 +6,7 @@ import pytest
 
 from tests.conftest import authed_test_client, flash_messages
 from tests.helpers.store import list_jobs, save_upload
+from whisper_ui.core.constants import MULTIPART_HEADROOM_BYTES
 from whisper_ui.core.models import Job, JobStatus, Segment, TranscriptResult
 from whisper_ui.ui import labels as ui_labels
 from whisper_ui.web.app import create_app
@@ -1378,7 +1379,7 @@ class TestShareRoutes:
         from fastapi.testclient import TestClient
 
         job = _create_shared_job(db, filestore)
-        filestore.delete_upload_files(job.id)
+        filestore.detach_upload_dir(job.id)
 
         resp = TestClient(app).get(f"/shared/{job.share_token}/media")
 
@@ -1685,8 +1686,10 @@ class TestUploadRequestSizeLimit:
 
     @pytest.fixture
     def small_cap_app(self, app, settings):
-        # model_copy skips validation, so a cap this small is allowed here.
-        capped = settings.model_copy(update={"max_upload_size": 500, "max_upload_request_size": 1000})
+        # The smallest request cap create_app accepts for a 500-byte file cap.
+        capped = settings.model_copy(
+            update={"max_upload_size": 500, "max_upload_request_size": 500 + MULTIPART_HEADROOM_BYTES}
+        )
         with patch("whisper_ui.core.config.get_settings", return_value=capped):
             application = create_app()
         application.state = app.state
@@ -1694,17 +1697,18 @@ class TestUploadRequestSizeLimit:
 
     def test_oversized_batch_gets_413_with_headers(self, small_cap_app, test_user):
         client = authed_test_client(small_cap_app, test_user)
-        files = [("files", ("a.mp3", b"x" * 600, "audio/mpeg")), ("files", ("b.mp3", b"x" * 600, "audio/mpeg"))]
+        half = b"x" * (MULTIPART_HEADROOM_BYTES // 2 + 1000)
+        files = [("files", ("a.mp3", half, "audio/mpeg")), ("files", ("b.mp3", half, "audio/mpeg"))]
         resp = client.post("/upload", data={"language": "zh"}, files=files, follow_redirects=False)
         assert resp.status_code == 413
-        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 KB")
+        assert resp.text == ui_labels.UPLOAD_REQUEST_TOO_LARGE.format(limit="1 MB")
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
         assert resp.headers["X-Request-ID"]
 
     def test_anonymous_oversized_upload_is_sent_to_login_first(self, small_cap_app):
         from fastapi.testclient import TestClient
 
-        files = [("files", ("a.mp3", b"x" * 2000, "audio/mpeg"))]
+        files = [("files", ("a.mp3", b"x" * (MULTIPART_HEADROOM_BYTES + 1000), "audio/mpeg"))]
         resp = TestClient(small_cap_app).post(
             "/upload", files=files, headers={"origin": "http://testserver"}, follow_redirects=False
         )
@@ -2237,7 +2241,7 @@ class TestRetentionSweep:
 
         job = Job(filename=f"old-{idx}.mp3", status=JobStatus.COMPLETED, language="zh")
         db.insert_job(job)
-        # Seed an upload dir so delete_upload_files has something to reclaim.
+        # Seed an upload dir so the sweep has something to reclaim.
         (settings.upload_dir / job.id).mkdir(parents=True)
         (settings.upload_dir / job.id / "source.mp3").write_bytes(b"x")
         # Backdate updated_at past the retention threshold.
@@ -2281,6 +2285,39 @@ class TestRetentionSweep:
         # Sweep 3: nothing left to do.
         removed_3 = _run_retention_sweep(settings.database_path, filestore, threshold_iso, limit)
         assert removed_3 == 0
+
+    def test_sweep_keeps_the_dir_of_a_job_retried_after_listing(self, db, filestore, settings, monkeypatch):
+        """A retry that claims a listed FAILED URL job before the sweep reaches
+        it keeps its upload dir: the worker may already be downloading into it."""
+        from datetime import UTC, datetime, timedelta
+
+        from whisper_ui.core.models import Job
+        from whisper_ui.storage.database import JobDatabase
+        from whisper_ui.web.app import _run_retention_sweep
+
+        now = datetime.now(UTC)
+        job = Job(filename="url", status=JobStatus.FAILED, source_url="https://www.youtube.com/watch?v=x")
+        db.insert_job(job)
+        db._conn.execute(
+            "UPDATE jobs SET updated_at = ? WHERE id = ?", ((now - timedelta(days=30)).isoformat(), job.id)
+        )
+        db._conn.commit()
+        download = filestore.prepare_upload_dir(job.id) / "video.mp4"
+        download.write_bytes(b"x")
+
+        listed = JobDatabase.list_reclaimable_upload_job_ids
+
+        def list_then_retry(self, threshold_iso):
+            ids = listed(self, threshold_iso)
+            assert db.try_claim_retry(job.id, None)  # the user's retry lands here
+            return ids
+
+        monkeypatch.setattr(JobDatabase, "list_reclaimable_upload_job_ids", list_then_retry)
+
+        removed = _run_retention_sweep(settings.database_path, filestore, (now - timedelta(days=7)).isoformat(), 50)
+
+        assert removed == 0
+        assert download.exists()
 
     def test_list_reclaimable_upload_job_ids_orders_oldest_first(self, db):
         """Stable ORDER BY makes the sweep deterministic; assert that

@@ -131,20 +131,47 @@ def test_delete_job_files(filestore: FileStore):
     assert filestore.load_result("job2") is None
 
 
-def test_delete_upload_files_removes_uploads_but_keeps_result(filestore: FileStore):
+def test_detach_upload_dir_moves_uploads_aside_but_keeps_result(filestore: FileStore):
     save_upload(filestore, "job3", "input.mp3", b"data")
     result = TranscriptResult(segments=[], language="zh", duration=0.0)
     filestore.save_result("job3", result)
 
-    removed = filestore.delete_upload_files("job3")
-    assert removed is True
-    # Upload dir is gone; the saved transcript still loads.
+    detached = filestore.detach_upload_dir("job3")
+
+    assert detached is not None
+    assert (detached / "input.mp3").read_bytes() == b"data"
     assert not filestore.get_upload_path("job3", "input.mp3").exists()
     assert filestore.load_result("job3") is not None
 
 
-def test_delete_upload_files_returns_false_when_nothing_to_remove(filestore: FileStore):
-    assert filestore.delete_upload_files("job-does-not-exist") is False
+def test_detach_upload_dir_returns_none_when_nothing_to_move(filestore: FileStore):
+    assert filestore.detach_upload_dir("job-does-not-exist") is None
+
+
+def test_a_retry_after_detach_gets_a_fresh_upload_dir(filestore: FileStore):
+    save_upload(filestore, "job4", "video.mp4", b"old")
+    filestore.detach_upload_dir("job4")
+
+    fresh = filestore.prepare_upload_dir("job4")
+
+    assert list(fresh.iterdir()) == []
+
+
+def test_purge_detached_uploads_deletes_everything_moved_aside(filestore: FileStore):
+    save_upload(filestore, "job5", "input.mp3", b"data")
+    save_upload(filestore, "job6", "input.mp3", b"data")
+    first = filestore.detach_upload_dir("job5")
+    second = filestore.detach_upload_dir("job6")
+
+    purged = filestore.purge_detached_uploads()
+
+    assert purged == 2
+    assert first is not None and not first.exists()
+    assert second is not None and not second.exists()
+
+
+def test_purge_detached_uploads_returns_zero_when_nothing_was_detached(filestore: FileStore):
+    assert filestore.purge_detached_uploads() == 0
 
 
 def test_delete_job_files_logs_info_with_directory_summary(filestore: FileStore, caplog):
@@ -163,14 +190,14 @@ def test_delete_job_files_logs_info_with_directory_summary(filestore: FileStore,
     assert "output" in info
 
 
-def test_delete_upload_files_logs_debug_on_success(filestore: FileStore, caplog):
+def test_detach_upload_dir_logs_debug_on_success(filestore: FileStore, caplog):
     import logging as _logging
 
     save_upload(filestore, "job-dbg", "input.mp3", b"data")
     with caplog.at_level(_logging.DEBUG, logger="whisper_ui.storage.filestore"):
-        filestore.delete_upload_files("job-dbg")
+        filestore.detach_upload_dir("job-dbg")
 
-    assert any("reclaimed upload dir" in r.getMessage() and "job-dbg" in r.getMessage() for r in caplog.records)
+    assert any("detached upload dir" in r.getMessage() and "job-dbg" in r.getMessage() for r in caplog.records)
 
 
 def test_copy_source_for_new_job_copies_audio_to_new_dir(filestore: FileStore):
