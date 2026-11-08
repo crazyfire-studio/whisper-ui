@@ -199,7 +199,14 @@ def adjust_subjob_timeouts(
         from rq.job import JobStatus as RQJobStatus
 
         new_timeout = calculate_job_timeout(duration_seconds, settings)
-        resizable = {RQJobStatus.DEFERRED, RQJobStatus.QUEUED, RQJobStatus.SCHEDULED}
+        # READY_TO_ENQUEUE (RQ 3): a dependent whose dependencies finished, on its
+        # way from the deferred to the queued state. It has not started yet.
+        resizable = {
+            RQJobStatus.DEFERRED,
+            RQJobStatus.READY_TO_ENQUEUE,
+            RQJobStatus.QUEUED,
+            RQJobStatus.SCHEDULED,
+        }
         resized = 0
         for sub_id in _load_subjob_ids(redis, parent_job_id, generation):
             try:
@@ -678,7 +685,7 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     """Return True when a QUEUED/PROCESSING parent has no live RQ work left.
 
     "Live" means at least one current-generation sub-job is still queued,
-    deferred, scheduled, or started. A parent whose sub-jobs are all finished,
+    deferred, ready to enqueue, scheduled, or started. A parent whose sub-jobs are all finished,
     failed, cancelled, or gone has nothing progressing it and is a genuine
     stale/dead pipeline. A job merely waiting in a backed-up queue is ALIVE and
     must not be reaped — that is the whole point of moving the stale reaper from
@@ -700,7 +707,13 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     sub_ids = _load_subjob_ids(redis, parent_job_id, generation)
     if not sub_ids:
         return True
-    live = {RQJobStatus.QUEUED, RQJobStatus.STARTED, RQJobStatus.DEFERRED, RQJobStatus.SCHEDULED}
+    live = {
+        RQJobStatus.QUEUED,
+        RQJobStatus.STARTED,
+        RQJobStatus.DEFERRED,
+        RQJobStatus.READY_TO_ENQUEUE,
+        RQJobStatus.SCHEDULED,
+    }
     for sub_id in sub_ids:
         try:
             status = RQJob.fetch(sub_id, connection=redis).get_status(refresh=True)

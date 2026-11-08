@@ -176,6 +176,23 @@ def test_adjust_subjob_timeouts_rescales_gpu_stages_once_duration_known(tmp_path
     assert subs["run_assign_speakers"].timeout == settings.job_timeout_default
 
 
+def test_adjust_subjob_timeouts_rescales_a_stage_that_is_ready_to_enqueue(tmp_path):
+    """A GPU stage already in RQ 3's READY_TO_ENQUEUE state has not started, so
+    it still gets the duration-scaled timeout."""
+    from rq.job import JobStatus as RQJobStatus
+
+    redis = fakeredis.FakeRedis()
+    settings = _build_settings(ollama="")
+    job = Job(id="job-ready-resize", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.QUEUED)
+    enqueue_pipeline(job, redis=redis, settings=settings, filestore=_build_filestore(tmp_path))
+    generation = _current_generation(redis, job.id)
+    _by_stage(_load_subjobs(redis, job.id))["run_transcribe_align"].set_status(RQJobStatus.READY_TO_ENQUEUE)
+
+    adjust_subjob_timeouts(redis, job.id, generation, 2000.0, settings)
+
+    assert _by_stage(_load_subjobs(redis, job.id))["run_transcribe_align"].timeout == 4000
+
+
 def test_adjust_subjob_timeouts_is_noop_without_duration(tmp_path):
     """An unknown/zero duration must leave the enqueue-time timeouts intact."""
     redis = fakeredis.FakeRedis()
@@ -1569,6 +1586,25 @@ def test_is_pipeline_dead_false_when_a_subjob_is_still_queued(tmp_path):
     enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
 
     # Fresh out of enqueue: preprocess is QUEUED and the rest DEFERRED.
+    assert pd.is_pipeline_dead(redis, job.id) is False
+
+
+def test_is_pipeline_dead_false_when_a_subjob_is_ready_to_enqueue(tmp_path):
+    """RQ 3 moves a dependent through READY_TO_ENQUEUE between its dependencies
+    finishing and the job being queued. A pipeline whose only unfinished sub-job
+    is in that state is still alive."""
+    from rq.job import JobStatus as RQJobStatus
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(id="job-ready", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
+    enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
+    subs = _load_subjobs(redis, job.id)
+    for sub in subs[1:]:
+        sub.cancel()
+    subs[0].set_status(RQJobStatus.READY_TO_ENQUEUE)
+
     assert pd.is_pipeline_dead(redis, job.id) is False
 
 
