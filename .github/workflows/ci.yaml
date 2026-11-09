@@ -89,6 +89,16 @@ jobs:
   integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # A real Redis for tests/integration/test_rq_dag_real_redis.py: fakeredis
+    # does not run RQ's server-side behaviour the way Redis does, so an RQ
+    # upgrade needs the DAG scenarios on a real server. Same image as compose.
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     # Same dual-version coverage as lint-and-test. lupa (fakeredis [lua])
     # ships per-cpython-ABI wheels, so 3.12 vs 3.13 must both be exercised
     # against the actual EVAL-based progress reporter code path.
@@ -150,6 +160,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --frozen --python ${{ matrix.python-version }}
       - name: Integration tests
+        env:
+          REDIS_TEST_URL: redis://localhost:6379/15
         run: uv run pytest -m integration --tb=short -q
   # Catch Dockerfile / dependency-pin regressions at PR time. Docker Publish
   # only runs on push to main, which previously let a Python version mismatch

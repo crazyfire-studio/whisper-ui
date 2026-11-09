@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import fakeredis
 import pytest
 from rq.job import Job as RQJob
+from rq.job import JobStatus as RQJobStatus
 
 from whisper_ui.core.constants import (
     WORKER_QUEUE_CPU,
@@ -174,6 +175,23 @@ def test_adjust_subjob_timeouts_rescales_gpu_stages_once_duration_known(tmp_path
     assert subs["run_download"].timeout == settings.job_timeout_default
     assert subs["run_preprocess"].timeout == settings.job_timeout_default
     assert subs["run_assign_speakers"].timeout == settings.job_timeout_default
+
+
+def test_adjust_subjob_timeouts_rescales_a_stage_that_is_ready_to_enqueue(tmp_path):
+    """A GPU stage already in RQ 3's READY_TO_ENQUEUE state has not started, so
+    it still gets the duration-scaled timeout."""
+    from rq.job import JobStatus as RQJobStatus
+
+    redis = fakeredis.FakeRedis()
+    settings = _build_settings(ollama="")
+    job = Job(id="job-ready-resize", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.QUEUED)
+    enqueue_pipeline(job, redis=redis, settings=settings, filestore=_build_filestore(tmp_path))
+    generation = _current_generation(redis, job.id)
+    _by_stage(_load_subjobs(redis, job.id))["run_transcribe_align"].set_status(RQJobStatus.READY_TO_ENQUEUE)
+
+    adjust_subjob_timeouts(redis, job.id, generation, 2000.0, settings)
+
+    assert _by_stage(_load_subjobs(redis, job.id))["run_transcribe_align"].timeout == 4000
 
 
 def test_adjust_subjob_timeouts_is_noop_without_duration(tmp_path):
@@ -992,11 +1010,10 @@ def test_subjobs_carry_current_generation_in_meta(tmp_path):
 
 def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeypatch, tmp_path):
     """Regression for PR #39 R3 Layer 1: a failed transcribe_align must
-    fire send_stop_job_command for every sibling sub-job (so diarize
-    running on a second GPU worker is actually stopped), not just
-    sub.cancel() which leaves running jobs untouched. The test mocks
-    send_stop_job_command on the dispatcher module and asserts it was
-    invoked for each non-excluded sub-job.
+    fire send_stop_job_command for a sibling that is still running (so
+    diarize on a second GPU worker is actually stopped), not just
+    sub.cancel() which leaves running jobs untouched. Siblings that are not
+    running get no stop command: RQ 3 logs a WARNING for each one.
     """
     from whisper_ui.worker import pipeline_dispatcher as pd
 
@@ -1017,7 +1034,9 @@ def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeyp
     assert len(sub_ids) >= 3  # preprocess + transcribe_align + diarize at minimum
 
     failing = next(s for s in _load_subjobs(redis, job.id) if _stage_func(s) == "run_transcribe_align")
-    expected_targets = sub_ids - {failing.id}
+    running = next(s for s in _load_subjobs(redis, job.id) if _stage_func(s) == "run_diarize")
+    running.set_status(RQJobStatus.STARTED)
+    expected_targets = {running.id}
 
     runtime = MagicMock()
     runtime.redis = redis
@@ -1042,7 +1061,7 @@ def test_cancel_remaining_subjobs_sends_stop_command_to_running_siblings(monkeyp
 
     called_sub_ids = {call.args[1] for call in mock_stop.call_args_list}
     assert called_sub_ids == expected_targets, (
-        f"send_stop_job_command should target every sibling except the failing one. "
+        f"send_stop_job_command should target only the running sibling. "
         f"expected {expected_targets}, got {called_sub_ids}"
     )
     # The failing sub-job itself must not receive a stop command (RQ would
@@ -1569,6 +1588,25 @@ def test_is_pipeline_dead_false_when_a_subjob_is_still_queued(tmp_path):
     enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
 
     # Fresh out of enqueue: preprocess is QUEUED and the rest DEFERRED.
+    assert pd.is_pipeline_dead(redis, job.id) is False
+
+
+def test_is_pipeline_dead_false_when_a_subjob_is_ready_to_enqueue(tmp_path):
+    """RQ 3 moves a dependent through READY_TO_ENQUEUE between its dependencies
+    finishing and the job being queued. A pipeline whose only unfinished sub-job
+    is in that state is still alive."""
+    from rq.job import JobStatus as RQJobStatus
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(id="job-ready", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
+    enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
+    subs = _load_subjobs(redis, job.id)
+    for sub in subs[1:]:
+        sub.cancel()
+    subs[0].set_status(RQJobStatus.READY_TO_ENQUEUE)
+
     assert pd.is_pipeline_dead(redis, job.id) is False
 
 

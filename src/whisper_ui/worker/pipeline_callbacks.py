@@ -141,16 +141,19 @@ def cancel_remaining_subjobs(
 
     1. **Already running.** ``RQJob.cancel()`` alone does *not* stop a
        running job — it only removes pending / deferred ones from the
-       queue. ``send_stop_job_command`` is fired first, but what it does
+       queue. ``send_stop_job_command`` is fired first for a STARTED
+       sibling, but what it does
        depends on the worker class: the default forking Worker (CPU
        profile) SIGKILLs the horse process immediately, while
        ``SimpleWorker`` (cuda / rocm profiles, no child process) treats
        the resulting ``kill_horse`` as a documented no-op — the running
-       stage keeps executing to completion. Verified against rq 2.9.1
-       (``Worker.kill_horse`` vs ``BaseWorker.kill_horse``).
-    2. **Still queued / deferred.** ``send_stop_job_command`` is a no-op
-       for jobs that have not started, so it is followed by ``cancel()``
-       to evict them from the queue registry. Downstream dependent jobs
+       stage keeps executing to completion. Verified against rq 3.0.0
+       (``Worker.kill_horse`` vs ``BaseWorker.kill_horse``); RQ 3's new
+       ``send_stop_execution_command`` ends in the same ``kill_horse``, so
+       it would not stop a SimpleWorker stage either.
+    2. **Not running.** A queued, deferred or already finished sibling has
+       no worker to stop, so it only gets ``cancel()``, which evicts a
+       pending one from the queue registry. Downstream dependent jobs
        would otherwise sit in the deferred registry forever.
 
     Both calls are best-effort: failures only debug-log and the loop
@@ -162,23 +165,24 @@ def cancel_remaining_subjobs(
     the zombie stage is rejected.
     """
     from rq.job import Job as RQJob
+    from rq.job import JobStatus as RQJobStatus
 
     for sub_id in sibling_ids:
         if sub_id == exclude:
             continue
         try:
-            send_stop_job_command(redis, sub_id)
-        except Exception:
-            logger.debug(
-                "send_stop_job_command for %s failed (likely not currently running)",
-                sub_id,
-                exc_info=True,
-            )
-        try:
             sub = RQJob.fetch(sub_id, connection=redis)
         except Exception:
             logger.debug("sub-job %s no longer exists, skipping cancel", sub_id)
             continue
+        # Only a running sibling has a worker to stop. A finished one still
+        # names the worker that ran it, and RQ 3 logs "Not working on job ...,
+        # command ignored" at WARNING when that worker gets the command.
+        if sub.get_status(refresh=False) == RQJobStatus.STARTED:
+            try:
+                send_stop_job_command(redis, sub_id)
+            except Exception:
+                logger.debug("send_stop_job_command for %s failed", sub_id, exc_info=True)
         try:
             sub.cancel()
         except Exception:
