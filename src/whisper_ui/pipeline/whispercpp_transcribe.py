@@ -33,6 +33,22 @@ _VAD_HF_REPO = "ggml-org/whisper-vad"
 _RUN_PROGRESS_START = 0.1
 
 
+def _load_cli_json(path: Path) -> dict[str, Any]:
+    """Parse whisper-cli's ``-oj`` file, dropping bytes that are not valid UTF-8.
+
+    The file can hold a multi-byte character cut off part-way through a
+    segment's text. Strict decoding would then fail the whole job over one
+    broken character. Invalid bytes never include ASCII, so JSON's quotes and
+    braces survive and only the broken character is lost.
+    """
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", errors="ignore")
+    dropped = len(raw) - len(text.encode("utf-8"))
+    if dropped:
+        logger.warning("whisper-cli JSON held %d invalid UTF-8 bytes; dropped them", dropped)
+    return json.loads(text)
+
+
 class WhisperCppTranscribeStage:
     """Transcribe via the whisper.cpp HIP CLI — the AMD/ROCm transcription path.
 
@@ -212,7 +228,7 @@ class WhisperCppTranscribeStage:
             json_path = Path(f"{out_prefix}.json")
             if not json_path.is_file():
                 raise TranscriptionError("whisper-cli produced no JSON output")
-            return json.loads(json_path.read_text(encoding="utf-8"))
+            return _load_cli_json(json_path)
 
     @staticmethod
     def _to_whisperx_result(data: dict[str, Any], requested_language: str) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +8,22 @@ import pytest
 
 from whisper_ui.core.exceptions import PreprocessError
 from whisper_ui.pipeline.preprocess import PreprocessStage
+
+
+def test_ffmpeg_stderr_with_invalid_utf8_is_reported_as_a_preprocess_error(tmp_path, monkeypatch):
+    # A real subprocess: ffmpeg echoes the file's metadata tags to stderr, and a
+    # tag in a legacy encoding must not surface as a UnicodeDecodeError.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_ffmpeg = bin_dir / "ffmpeg"
+    fake_ffmpeg.write_text("#!/bin/sh\nprintf 'title: \\350\\236\\n' >&2\nexit 1\n")
+    fake_ffmpeg.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    src = tmp_path / "test.wav"
+    src.write_bytes(b"RIFF")
+
+    with pytest.raises(PreprocessError, match="FFmpeg failed: title"):
+        PreprocessStage().execute({"input_path": str(src)})
 
 
 def test_unsupported_extension(tmp_path):

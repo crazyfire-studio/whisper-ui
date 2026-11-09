@@ -274,6 +274,37 @@ class TestVadModelResolution:
             assert stage._resolve_vad_model_path() == "/cache/ggml-silero-v5.1.2.bin"
 
 
+class TestInvalidUtf8InCliJson:
+    """whisper-cli's JSON can hold a character cut off part-way through."""
+
+    # "好" followed by the first two bytes of a three-byte character.
+    _RAW = (
+        b'{"result": {"language": "zh"}, "transcription": '
+        b'[{"offsets": {"from": 0, "to": 1000}, "text": "\xe5\xa5\xbd\xe8\x9e"}]}'
+    )
+
+    def _execute(self) -> dict:
+        def write_raw_json(cmd, *args, **kwargs):
+            Path(f"{cmd[cmd.index('-of') + 1]}.json").write_bytes(self._RAW)
+            return MagicMock(returncode=0, stderr="", stdout="")
+
+        with (
+            _patched_model_paths(),
+            patch(f"{_MODULE}.subprocess.run", side_effect=write_raw_json),
+            patch.dict("sys.modules", {"whisperx": MagicMock()}),
+        ):
+            return WhisperCppTranscribeStage().execute({"audio_path": "/tmp/a.wav", "language": "zh"})
+
+    def test_keeps_the_segment_and_drops_only_the_broken_character(self):
+        segments = self._execute()["transcription_result"]["segments"]
+        assert [s["text"] for s in segments] == ["好"]
+
+    def test_logs_how_many_bytes_were_dropped(self, caplog):
+        with caplog.at_level("WARNING", logger=_MODULE):
+            self._execute()
+        assert "held 2 invalid UTF-8 bytes" in caplog.text
+
+
 class TestBackendSelection:
     @staticmethod
     def _runtime(backend: str) -> MagicMock:
