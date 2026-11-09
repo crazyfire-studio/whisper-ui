@@ -47,7 +47,11 @@ class PreprocessStage:
             str(output_path),
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_CONVERT_TIMEOUT)
+            # encoding/errors (not text=True): ffmpeg echoes the input's metadata
+            # tags to stderr, and those need not be valid UTF-8.
+            result = subprocess.run(
+                cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=FFMPEG_CONVERT_TIMEOUT
+            )
         except FileNotFoundError as err:
             raise PreprocessError("FFmpeg not found. Please install FFmpeg.") from err
         except subprocess.TimeoutExpired as err:

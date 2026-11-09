@@ -58,7 +58,10 @@ def get_audio_duration_seconds(path: Path | str, *, job_id: str | None = None) -
                 str(path),
             ],
             capture_output=True,
-            text=True,
+            # encoding/errors (not text=True): ffprobe's diagnostics can quote
+            # metadata from the file, which need not be valid UTF-8.
+            encoding="utf-8",
+            errors="replace",
             timeout=FFPROBE_TIMEOUT,
         )
     except subprocess.TimeoutExpired:

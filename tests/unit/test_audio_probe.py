@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from unittest.mock import patch
 
@@ -12,6 +13,18 @@ from whisper_ui.pipeline.audio_probe import _log_label, get_audio_duration_secon
 def _mock_run(stdout: str = "", *, returncode: int = 0):
     result = subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
     return patch("whisper_ui.pipeline.audio_probe.subprocess.run", return_value=result)
+
+
+def test_invalid_utf8_on_stderr_does_not_break_the_probe(tmp_path, monkeypatch):
+    # A real subprocess: ffprobe's diagnostics can quote metadata from the file.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_ffprobe = bin_dir / "ffprobe"
+    fake_ffprobe.write_text("#!/bin/sh\nprintf '12.5\\n'\nprintf '\\350\\236\\n' >&2\n")
+    fake_ffprobe.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    assert get_audio_duration_seconds(tmp_path / "a.wav") == 12.5
 
 
 def test_returns_parsed_float():
