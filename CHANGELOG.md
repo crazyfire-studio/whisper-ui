@@ -7,6 +7,37 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-11-09
+
+The job queue moves to RQ 3, the whisper.cpp VAD threshold becomes configurable,
+and invalid UTF-8 in tool output no longer fails a job.
+
+### Deploy notes
+
+- **Upgrade with an empty queue.** RQ does not document running 2.x and 3.x
+  workers on one Redis, so let queued and running jobs finish, then recreate the
+  frontend and every worker together. The same applies when going back to 3.0.0.
+
+### Added
+
+- `WHISPERCPP_VAD_THRESHOLD` sets the speech probability the whisper.cpp VAD
+  keeps audio above. The default stays 0.5; 0.3 lowered the error rate on our
+  meeting recordings and Taiwanese captioned videos (#270).
+- The upload page explains when to pick auto-detect for mixed Chinese and
+  English (#268).
+
+### Changed
+
+- RQ 2.12.0 → 3.0.0 (#241).
+
+### Fixed
+
+- Invalid UTF-8 in whisper-cli's JSON no longer fails the job; the bad bytes are
+  dropped and logged. ffmpeg and ffprobe output is decoded the same tolerant way
+  (#273).
+- A character repeated eight or more times, usually laughter or a held sound, is
+  collapsed to three (#269).
+
 ## [3.0.0] - 2026-11-08
 
 Fixes from a pre-release review of security, correctness and operations, Taiwan
@@ -1215,7 +1246,8 @@ Error` JSON body while logging the full traceback, so an
   classification, missing-job handling) are now covered by unit tests
   in `test_pipeline_dispatcher.py` and `test_stage_tasks.py`.
 
-[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.0
 [3.0.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.0.0
 [2.22.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v2.22.0
 [2.21.0]: https://github.com/fdff87554/whisper-ui/releases/tag/v2.21.0
