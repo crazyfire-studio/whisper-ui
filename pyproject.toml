@@ -5,8 +5,8 @@ description = "Speech-to-text system using OpenAI Whisper with speaker diarizati
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-  "pydantic>=2.14.2,<3",
-  "pydantic-settings>=2.16.2,<3",
+  "pydantic>=2.14.3,<3",
+  "pydantic-settings>=2.16.3,<3",
   "redis>=8.1.0,<9",
   "rq>=3.0.0,<4",
 ]
