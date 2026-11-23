@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -324,23 +326,28 @@ class DownloadStage:
             # writes straight to stderr; see whisper_ui.core.ytdlp_logging.
             "logger": YtDlpLogger(logger),
         }
-        # Operator-supplied login cookies (X login-walled / age-restricted posts).
-        # Only set when the file actually exists, so an unset/missing path stays
-        # an anonymous attempt rather than failing the download.
-        if cookiefile:
-            ydl_opts["cookiefile"] = cookiefile
+        with tempfile.TemporaryDirectory() as scratch:
+            # Operator-supplied login cookies (X login-walled / age-restricted
+            # posts). Only set when the file actually exists, so an unset/missing
+            # path stays an anonymous attempt rather than failing the download.
+            # yt-dlp writes the jar back to its cookiefile on close, so it gets
+            # a private copy: the operator's file is mounted read-only, and
+            # parallel downloads must not overwrite each other's jar.
+            # copyfile, not copy: the copy must not inherit a read-only mode.
+            if cookiefile:
+                ydl_opts["cookiefile"] = shutil.copyfile(cookiefile, Path(scratch) / "cookies.txt")
 
-        try:
-            info = self._extract_with_retries(yt_dlp, source_url, ydl_opts, allowed_extractors=allowed_extractors)
-        except BaseException:
-            # An aborted download leaves "video.fNNN.mp4.part" behind. The
-            # stale sweep above only runs before the next attempt, so without
-            # this the bytes sit on disk until the job is deleted -- which is
-            # exactly the disk the byte cap exists to protect.
-            for partial in download_dir.glob("video.*"):
-                if partial.is_file():
-                    partial.unlink(missing_ok=True)
-            raise
+            try:
+                info = self._extract_with_retries(yt_dlp, source_url, ydl_opts, allowed_extractors=allowed_extractors)
+            except BaseException:
+                # An aborted download leaves "video.fNNN.mp4.part" behind. The
+                # stale sweep above only runs before the next attempt, so without
+                # this the bytes sit on disk until the job is deleted -- which is
+                # exactly the disk the byte cap exists to protect.
+                for partial in download_dir.glob("video.*"):
+                    if partial.is_file():
+                        partial.unlink(missing_ok=True)
+                raise
 
         downloaded = self._resolve_downloaded_path(info, download_dir)
         # Last line: the progress events describe what a downloader *says* it
