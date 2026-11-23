@@ -73,6 +73,43 @@ def test_update_job(db: JobDatabase):
     assert fetched.progress == 1.0
 
 
+def test_mark_processing_moves_a_queued_job(db: JobDatabase):
+    job = Job(filename="test.mp3", filepath="/tmp/test.mp3", status=JobStatus.QUEUED)
+    db.insert_job(job)
+
+    db.mark_processing(job.id)
+
+    assert db.get_job(job.id).status == JobStatus.PROCESSING
+
+
+def test_mark_processing_leaves_a_failed_job_alone(db: JobDatabase):
+    """A sibling stage that starts after the job failed must not revive it."""
+    job = Job(filename="test.mp3", filepath="/tmp/test.mp3", status=JobStatus.FAILED, error="boom")
+    db.insert_job(job)
+
+    db.mark_processing(job.id)
+
+    fetched = db.get_job(job.id)
+    assert fetched.status == JobStatus.FAILED
+    assert fetched.error == "boom"
+
+
+def test_set_share_token_keeps_updated_at(db: JobDatabase):
+    """updated_at is the completion time the retention sweep and the per-day
+    counts read; sharing a transcript must not move it."""
+    job = Job(filename="test.mp3", filepath="/tmp/test.mp3", status=JobStatus.COMPLETED)
+    job.updated_at = "2026-01-01T00:00:00+00:00"
+    db.insert_job(job)
+
+    db.set_share_token(job.id, "test-share-token-not-real")
+
+    fetched = db.get_job(job.id)
+    assert fetched.share_token == "test-share-token-not-real"
+    assert fetched.updated_at == "2026-01-01T00:00:00+00:00"
+    db.set_share_token(job.id, None)
+    assert db.get_job(job.id).share_token is None
+
+
 def test_update_job_progress_only_touches_progress_fields(db: JobDatabase):
     """The field-level progress mirror must never overwrite status /
     result_path / error — that is what makes it safe to use during a Redis
