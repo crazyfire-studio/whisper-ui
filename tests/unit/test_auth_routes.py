@@ -275,6 +275,28 @@ def test_register_first_account_becomes_admin(app, db):
     assert app.state.bootstrap_done is True
 
 
+def test_register_bootstrap_loser_of_a_race_does_not_become_admin(app, db, monkeypatch):
+    """Two bootstrap registrations overlap while the password is hashed off the
+    event loop. Only the one that inserts first may become the admin."""
+    hash_password = users_repo.hash_password
+
+    def hash_while_another_bootstrap_finishes(password):
+        password_hash = hash_password(password)
+        users_repo.insert_user(db.conn, "first", password_hash, is_admin=True)
+        return password_hash
+
+    monkeypatch.setattr(users_repo, "hash_password", hash_while_another_bootstrap_finishes)
+    app.state.bootstrap_done = False
+    client = _anon_client(app)
+
+    resp = client.post("/register", data={"username": "second", "password": "password123"})
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/register"
+    assert users_repo.get_user_by_username(db.conn, "second") is None
+    assert users_repo.count_active_admins(db.conn) == 1
+
+
 def test_register_rate_limited_per_ip_after_threshold(app, db, test_admin):
     """Open registration is bounded per IP; the attempt past the cap is refused."""
     app.state.settings.max_register_attempts_per_ip = 2

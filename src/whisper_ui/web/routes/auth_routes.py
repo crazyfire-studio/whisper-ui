@@ -338,6 +338,10 @@ async def register_submit(
         rate_limit.record_register_attempt(redis, ip=ip, window_seconds=settings.login_lockout_seconds)
 
     password_hash = await asyncio.to_thread(users_repo.hash_password, password)
+    # The hash ran off the event loop, so another bootstrap may have finished
+    # meanwhile. Nothing awaits between this check and the insert.
+    if bootstrap and users_repo.count_active_admins(db.conn) != 0:
+        return _redirect_after_auth(request, "/register")
     try:
         user = users_repo.insert_user(
             db.conn,
