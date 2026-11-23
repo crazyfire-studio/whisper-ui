@@ -83,10 +83,17 @@ class WhisperCollector:
             from rq import Queue, Worker
             from rq.registry import FailedJobRegistry, StartedJobRegistry
 
+            # cleanup=False: a registry's cleanup runs the failure callbacks of
+            # abandoned jobs, and RQ arms their timeout with a signal handler,
+            # which only works on the main thread. On this thread the callback
+            # would be skipped and the sub-job failed anyway, stranding the
+            # pipeline. The workers' own maintenance does the cleanup.
             for name in _QUEUES:
                 depth.add_metric([name], len(Queue(name, connection=self._redis)))
-                failed.add_metric([name], FailedJobRegistry(name, connection=self._redis).count)
-                started.add_metric([name], StartedJobRegistry(name, connection=self._redis).count)
+                failed.add_metric([name], FailedJobRegistry(name, connection=self._redis).get_job_count(cleanup=False))
+                started.add_metric(
+                    [name], StartedJobRegistry(name, connection=self._redis).get_job_count(cleanup=False)
+                )
             workers.add_metric([], len(Worker.all(connection=self._redis)))
         except Exception:
             # Redis unreachable / RQ error → skip these gauges, keep the scrape healthy.

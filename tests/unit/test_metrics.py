@@ -56,6 +56,31 @@ def test_whisper_collector_reports_status_counts_and_queue_depth(tmp_path):
         db.close()
 
 
+def test_scrape_leaves_an_abandoned_job_for_the_workers_to_clean_up(tmp_path):
+    """The route renders on a worker thread, where RQ cannot run the failure
+    callback of an abandoned job. Counting must not trigger that cleanup."""
+    import time
+
+    from rq import Queue
+    from rq.job import JobStatus as RQJobStatus
+    from rq.registry import StartedJobRegistry
+
+    redis = fakeredis.FakeRedis()
+    db = JobDatabase(tmp_path / "m.db")
+    try:
+        abandoned = Queue("whisper:gpu", connection=redis).enqueue("math.sqrt", 4)
+        abandoned.set_status(RQJobStatus.STARTED)
+        registry = StartedJobRegistry("whisper:gpu", connection=redis)
+        redis.zadd(registry.key, {f"{abandoned.id}:execution": time.time() - 10})
+
+        out = _scrape(db, redis)
+
+        assert 'whisper_started_jobs{queue="whisper:gpu"} 1.0' in out
+        assert abandoned.get_status(refresh=True) == RQJobStatus.STARTED
+    finally:
+        db.close()
+
+
 def test_whisper_collector_degrades_when_redis_fails(tmp_path):
     """A Redis failure must not break the scrape: SQLite job metrics still emit,
     queue gauges are skipped, and collect() never raises."""

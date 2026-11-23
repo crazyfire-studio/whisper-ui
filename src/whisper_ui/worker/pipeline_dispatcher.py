@@ -685,9 +685,13 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     """Return True when a QUEUED/PROCESSING parent has no live RQ work left.
 
     "Live" means at least one current-generation sub-job is still queued,
-    deferred, ready to enqueue, scheduled, or started. A parent whose sub-jobs are all finished,
+    ready to enqueue, scheduled, or started. A parent whose sub-jobs are all finished,
     failed, cancelled, or gone has nothing progressing it and is a genuine
-    stale/dead pipeline. A job merely waiting in a backed-up queue is ALIVE and
+    stale/dead pipeline. Deferred sub-jobs alone do not count: a deferred
+    sub-job only ever runs after one of the live ones finishes, and RQ never
+    expires it, so a pipeline with nothing but deferred sub-jobs left (its
+    failure callback never ran) would otherwise be spared forever.
+    A job merely waiting in a backed-up queue is ALIVE and
     must not be reaped — that is the whole point of moving the stale reaper from
     wall-age to liveness, so a slow single-worker box stops mass-failing a
     healthy batch whose tail simply has not been reached yet.
@@ -710,7 +714,6 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     live = {
         RQJobStatus.QUEUED,
         RQJobStatus.STARTED,
-        RQJobStatus.DEFERRED,
         RQJobStatus.READY_TO_ENQUEUE,
         RQJobStatus.SCHEDULED,
     }

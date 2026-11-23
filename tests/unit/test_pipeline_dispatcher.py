@@ -1625,6 +1625,23 @@ def test_is_pipeline_dead_true_when_all_subjobs_terminal(tmp_path):
     assert pd.is_pipeline_dead(redis, job.id) is True
 
 
+def test_is_pipeline_dead_true_when_only_deferred_subjobs_remain(tmp_path):
+    """A sub-job failed without its failure callback cancelling the rest, so
+    the dependents stay DEFERRED. RQ never expires those; nothing can run."""
+    from rq.job import JobStatus as RQJobStatus
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(id="job-deferred", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
+    enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
+    subs = _by_stage(_load_subjobs(redis, job.id))
+    subs["run_preprocess"].set_status(RQJobStatus.FAILED)
+
+    assert subs["run_postprocess"].get_status(refresh=True) == RQJobStatus.DEFERRED
+    assert pd.is_pipeline_dead(redis, job.id) is True
+
+
 def test_is_pipeline_dead_true_when_generation_missing(tmp_path):
     """No generation counter (never enqueued / expired) → nothing to keep the
     pipeline alive → treated as dead."""
