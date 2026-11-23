@@ -191,11 +191,6 @@ def dummy_verify(password: str) -> None:
         _hasher.verify(_DUMMY_HASH, password)
 
 
-def set_password(conn: sqlite3.Connection, user_id: int, new_password: str) -> None:
-    """Hash ``new_password`` and store it; see ``store_password_hash``."""
-    store_password_hash(conn, user_id, hash_password(new_password))
-
-
 def store_password_hash(conn: sqlite3.Connection, user_id: int, new_hash: str) -> None:
     """Replace a user's password hash and bump session_version to invalidate
     every existing session on that account.

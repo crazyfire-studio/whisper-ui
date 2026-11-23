@@ -457,7 +457,7 @@ def test_parallel_branch_progress_never_regresses_in_redis(monkeypatch, fake_red
     history: list[float] = []
     for reporter, progress, message in writes:
         reporter.report(progress, message)
-        after = RedisProgressReporter.get_progress(fake_redis, parent_id)
+        after = RedisProgressReporter.get_progress_batch(fake_redis, [parent_id])[parent_id]
         history.append(float(after["progress"]))
 
     # Core invariant: every consecutive pair is non-decreasing.
@@ -473,7 +473,7 @@ def test_parallel_branch_progress_never_regresses_in_redis(monkeypatch, fake_red
     # Message must reflect the latest write even when progress did not
     # advance (the 0.20 transcribe write that was rejected still updated
     # its message). This is what lets the UI show the current stage name.
-    final = RedisProgressReporter.get_progress(fake_redis, parent_id)
+    final = RedisProgressReporter.get_progress_batch(fake_redis, [parent_id])[parent_id]
     assert final["message"] == "align starting"
 
 
@@ -502,7 +502,7 @@ def test_parallel_reporters_from_threads_never_regress(fake_redis):
     for t in threads:
         t.join()
 
-    final = RedisProgressReporter.get_progress(fake_redis, parent_id)
+    final = RedisProgressReporter.get_progress_batch(fake_redis, [parent_id])[parent_id]
     final_progress = float(final["progress"])
     # The highest value any writer produced is 0.20 + 199 * 0.003 ≈ 0.797
     expected_max = max(0.00 + (n_writes - 1) * 0.003, 0.20 + (n_writes - 1) * 0.003)

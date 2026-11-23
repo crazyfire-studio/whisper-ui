@@ -430,17 +430,17 @@ def test_fail_swallows_redis_connection_error(caplog):
     assert any("Redis fail write failed" in rec.message for rec in caplog.records)
 
 
-def test_get_progress_returns_empty_dict_on_redis_error(caplog):
+def test_get_progress_batch_returns_empty_dict_on_redis_error(caplog):
     import logging
 
     mock_redis = MagicMock()
-    mock_redis.hgetall.side_effect = RedisConnectionError("redis down")
+    mock_redis.pipeline.return_value.execute.side_effect = RedisConnectionError("redis down")
 
     with caplog.at_level(logging.WARNING):
-        result = RedisProgressReporter.get_progress(mock_redis, "job-x")
+        result = RedisProgressReporter.get_progress_batch(mock_redis, ["job-x"])
 
     assert result == {}
-    assert any("Redis progress read failed" in rec.message for rec in caplog.records)
+    assert any("Redis batch progress read failed" in rec.message for rec in caplog.records)
 
 
 def test_fail_truncates_long_error():
@@ -451,26 +451,6 @@ def test_fail_truncates_long_error():
     stored = _stored(fake)
     assert len(stored["error"]) <= 1000
     assert len(stored["message"]) <= 500
-
-
-def test_get_progress_empty():
-    mock_redis = MagicMock()
-    mock_redis.hgetall.return_value = {}
-    result = RedisProgressReporter.get_progress(mock_redis, "nonexistent")
-    assert result == {}
-
-
-def test_get_progress_decodes_bytes():
-    mock_redis = MagicMock()
-    mock_redis.hgetall.return_value = {
-        b"progress": b"0.75",
-        b"message": b"running",
-        b"status": b"processing",
-    }
-    result = RedisProgressReporter.get_progress(mock_redis, "test-id")
-    assert result["progress"] == "0.75"
-    assert result["message"] == "running"
-    assert result["status"] == "processing"
 
 
 def test_get_progress_batch_pipelines_and_omits_missing():
