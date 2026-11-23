@@ -621,10 +621,14 @@ def finalize_failure(rq_job, connection, _exc_type, exc_value, _traceback) -> No
             logger.error("finalize_failure could not find parent job %s", parent_job_id)
             return
 
-        if job.status == JobStatus.FAILED:
+        if job.status in (JobStatus.COMPLETED, JobStatus.FAILED):
+            # FAILED guards a duplicate failure callback. COMPLETED guards a
+            # late AbandonedJobError for the final sub-job: its worker died
+            # after the success callback ran but before RQ recorded FINISHED.
             logger.debug(
-                "finalize_failure: job %s already FAILED, skipping duplicate cleanup",
+                "finalize_failure: job %s already terminal (%s); skipping",
                 parent_job_id,
+                job.status.value,
             )
             return
 

@@ -723,6 +723,42 @@ def test_finalize_success_does_not_resurrect_failed_job(monkeypatch, tmp_path):
     assert job.status == JobStatus.FAILED
 
 
+def test_finalize_failure_does_not_demote_completed_job(monkeypatch, tmp_path):
+    """The final sub-job's worker died after finalize_success but before RQ
+    recorded FINISHED, so RQ later reports the sub-job as abandoned."""
+    from contextlib import contextmanager
+
+    from rq.exceptions import AbandonedJobError
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(
+        id="job-already-completed",
+        filename="m.mp3",
+        filepath=str(tmp_path / "m.mp3"),
+        status=JobStatus.COMPLETED,
+    )
+    runtime = MagicMock()
+    runtime.redis = redis
+    runtime.db.get_job.return_value = job
+
+    @contextmanager
+    def _fake_builder(job_id, *, generation=None):
+        runtime.reporter = MagicMock()
+        yield runtime
+
+    monkeypatch.setattr(pd, "build_worker_runtime", _fake_builder)
+    fake_rq_job = MagicMock()
+    fake_rq_job.meta = {"parent_job_id": job.id}
+
+    pd.finalize_failure(fake_rq_job, redis, AbandonedJobError, AbandonedJobError(), None)
+
+    runtime.db.update_job.assert_not_called()
+    runtime.reporter.fail.assert_not_called()
+    assert job.status == JobStatus.COMPLETED
+
+
 def test_finalize_failure_marks_job_failed_and_cancels_siblings(monkeypatch, tmp_path):
     from whisper_ui.worker import pipeline_dispatcher as pd
 
