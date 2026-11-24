@@ -10,6 +10,7 @@ flags the worker would receive without launching RQ or a container.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -116,3 +117,27 @@ def test_whitespace_value_does_not_inject_extra_queue(tmp_path: Path) -> None:
     assert "--max-idle-time" not in argv
     assert "foo" not in argv
     assert argv.rstrip().endswith("whisper:gpu")
+
+
+def _worker_name(result: subprocess.CompletedProcess[str]) -> str:
+    match = re.search(r"--name (\S+) ", _argv_line(result))
+    assert match is not None
+    return match.group(1)
+
+
+def test_each_start_gets_its_own_worker_name(tmp_path: Path) -> None:
+    # RQ rejects a name that is still registered without a death mark, so a
+    # restart in the same container must not reuse the previous name, however
+    # quickly it follows.
+    first = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+    second = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+
+    assert first != second
+
+
+def test_worker_name_keeps_the_hostname(tmp_path: Path) -> None:
+    hostname = subprocess.run(["hostname"], capture_output=True, text=True, check=True).stdout.strip()
+
+    name = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+
+    assert re.fullmatch(rf"whisper-worker-{re.escape(hostname)}-[0-9a-f-]{{36}}", name)
