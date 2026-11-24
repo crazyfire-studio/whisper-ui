@@ -79,9 +79,16 @@ echo "Starting RQ worker on queues: ${WORKER_QUEUES}"
 # credential, and argv is world-readable via `ps` to any local user on the
 # Docker host, whereas /proc/<pid>/environ is restricted to the process owner.
 export RQ_REDIS_URL="${REDIS_URL:-redis://redis:6379/0}"
+# A random suffix makes the name unique per process. RQ refuses to register a
+# name whose previous holder left no death mark, and a SimpleWorker killed
+# mid-job (SIGKILL, OOM, power loss) holds its name for job_timeout + 60 s, so
+# a restarted container with the same hostname would crash-loop until then.
+# The kernel hands out a fresh UUID on every read; a timestamp would repeat for
+# two starts within its resolution.
+worker_name="whisper-worker-$(hostname)-$(cat /proc/sys/kernel/random/uuid)"
 # shellcheck disable=SC2086
 exec python -m whisper_ui.worker worker \
-	--name "whisper-worker-$(hostname)" \
+	--name "${worker_name}" \
 	${WORKER_CLASS_ARG} \
 	${WORKER_MAX_IDLE_ARG} \
 	${WORKER_QUEUES}
