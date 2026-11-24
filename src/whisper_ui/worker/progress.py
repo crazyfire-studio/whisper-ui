@@ -351,25 +351,13 @@ class RedisProgressReporter:
         }
 
     @staticmethod
-    def get_progress(redis: Redis, job_id: str) -> dict[str, str]:
-        key = f"job:{job_id}"
-        try:
-            data = redis.hgetall(key)
-        except RedisError:
-            logger.warning("Redis progress read failed for %s", job_id, exc_info=True)
-            return {}
-        if not data:
-            return {}
-        return RedisProgressReporter._decode_hash(data)
-
-    @staticmethod
     def get_progress_batch(redis: Redis, job_ids: list[str]) -> dict[str, dict[str, str]]:
         """Fetch progress hashes for many jobs in a single Redis round-trip.
 
         The job list / dashboard poll (every few seconds) needs progress for
         every active job on the page. Pipelining one HGETALL per id collapses
-        what was N serial round-trips into one. Mirrors get_progress's decode
-        and empty-hash contract; jobs with no progress hash are simply absent
+        what was N serial round-trips into one. Jobs with no progress hash are
+        simply absent
         from the returned mapping.
         """
         if not job_ids:

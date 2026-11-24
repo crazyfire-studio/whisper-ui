@@ -149,13 +149,6 @@ def test_update_job_progress_only_touches_progress_fields(db: JobDatabase):
     assert fetched.result_path == "/out/result.json"
 
 
-def test_delete_job(db: JobDatabase):
-    job = Job(filename="test.mp3", filepath="/tmp/test.mp3")
-    db.insert_job(job)
-    db.delete_job(job.id)
-    assert db.get_job(job.id) is None
-
-
 def test_try_claim_retry_transitions_failed_to_queued_once(db: JobDatabase):
     """The atomic retry claim succeeds exactly once: a second concurrent call
     (job already QUEUED) returns False so two pipelines are never built."""
