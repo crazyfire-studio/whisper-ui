@@ -251,3 +251,56 @@ def test_insert_user_and_store_password_hash_take_a_precomputed_hash(conn):
     updated = users_repo.get_user_by_id(conn, user.id)
     assert users_repo.verify_password(updated, "second-password") is True
     assert updated.session_version == user.session_version + 1
+
+
+def test_insert_bootstrap_admin_creates_the_first_admin(conn):
+    user = users_repo.insert_bootstrap_admin(conn, "root", users_repo.hash_password("password123"))
+
+    assert user is not None
+    assert user.is_admin is True
+    assert user.is_active is True
+
+
+def test_insert_bootstrap_admin_refuses_when_an_active_admin_exists(conn):
+    users_repo.create_user(conn, "root", "password123", is_admin=True)
+
+    user = users_repo.insert_bootstrap_admin(conn, "second", users_repo.hash_password("password123"))
+
+    assert user is None
+    assert users_repo.get_user_by_username(conn, "second") is None
+
+
+def test_insert_bootstrap_admin_admits_one_of_two_racing_connections(settings):
+    """Two frontend processes would each hold their own connection. The check
+    and the insert are one statement, so the loser sees the winner's row."""
+    import threading
+
+    from whisper_ui.storage.database import JobDatabase
+
+    password_hash = users_repo.hash_password("password123")
+    databases = [JobDatabase(settings.database_path), JobDatabase(settings.database_path)]
+    start = threading.Barrier(2)
+    created = []
+
+    def register(database, username):
+        start.wait()
+        created.append(users_repo.insert_bootstrap_admin(database.conn, username, password_hash))
+
+    threads = [
+        threading.Thread(target=register, args=(database, name))
+        for database, name in zip(databases, ("first", "second"), strict=True)
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        # Both calls must return: a thread that raised would leave ``created``
+        # short, and one success would still satisfy a count of successes.
+        assert len(created) == 2
+        assert created.count(None) == 1
+        assert users_repo.count_active_admins(databases[0].conn) == 1
+    finally:
+        for database in databases:
+            database.close()
