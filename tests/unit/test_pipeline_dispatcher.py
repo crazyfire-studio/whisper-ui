@@ -759,6 +759,37 @@ def test_finalize_failure_does_not_demote_completed_job(monkeypatch, tmp_path):
     assert job.status == JobStatus.COMPLETED
 
 
+def test_finalize_failure_skipped_for_a_terminal_job_is_not_logged_as_a_failure(monkeypatch, tmp_path, caplog):
+    """A callback that is ignored did not fail anything, so the operator log
+    must not carry a "Pipeline failure" line for it."""
+    import logging as _logging
+    from contextlib import contextmanager
+
+    from rq.exceptions import AbandonedJobError
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    job = Job(id="job-done", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.COMPLETED)
+    runtime = MagicMock()
+    runtime.redis = fakeredis.FakeRedis()
+    runtime.db.get_job.return_value = job
+
+    @contextmanager
+    def _fake_builder(job_id, *, generation=None):
+        yield runtime
+
+    monkeypatch.setattr(pd, "build_worker_runtime", _fake_builder)
+    fake_rq_job = MagicMock()
+    fake_rq_job.meta = {"parent_job_id": job.id}
+
+    with caplog.at_level(_logging.DEBUG, logger="whisper_ui.worker.pipeline_dispatcher"):
+        pd.finalize_failure(fake_rq_job, runtime.redis, AbandonedJobError, AbandonedJobError(), None)
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any("Pipeline failure" in m for m in messages)
+    assert any("already terminal (completed)" in m and "AbandonedJobError" in m for m in messages)
+
+
 def test_finalize_failure_marks_job_failed_and_cancels_siblings(monkeypatch, tmp_path):
     from whisper_ui.worker import pipeline_dispatcher as pd
 

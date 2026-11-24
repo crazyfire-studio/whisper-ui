@@ -588,21 +588,6 @@ def finalize_failure(rq_job, connection, _exc_type, exc_value, _traceback) -> No
 
     meta_generation = extract_meta_generation(rq_job)
     error_msg = format_failure_message(_exc_type, exc_value)
-    # Log the raw exception class AND the raw detail (str(exc_value)) here,
-    # server-side only. error_msg is the generic message the UI shows; the raw
-    # detail — which can carry ffmpeg / whisper-cli stderr and internal paths —
-    # stays in the operator log so debugging is unaffected while the user sees
-    # only the sanitised per-stage message.
-    logger.error(
-        "Pipeline failure for job %s (sub_job=%s generation=%s exception=%s detail=%r user_message=%r)",
-        parent_job_id,
-        rq_job.id,
-        meta_generation if meta_generation is not None else "-",
-        _exc_type.__name__ if _exc_type is not None else "?",
-        str(exc_value) if exc_value is not None else "-",
-        error_msg,
-    )
-
     # Pass meta_generation into build_worker_runtime so runtime.reporter is
     # gated by the Lua fail script even if the Python short-circuit below
     # is bypassed — same defense-in-depth as finalize_success.
@@ -626,11 +611,28 @@ def finalize_failure(rq_job, connection, _exc_type, exc_value, _traceback) -> No
             # late AbandonedJobError for the final sub-job: its worker died
             # after the success callback ran but before RQ recorded FINISHED.
             logger.debug(
-                "finalize_failure: job %s already terminal (%s); skipping",
+                "finalize_failure: job %s already terminal (%s); skipping %s from sub-job %s",
                 parent_job_id,
                 job.status.value,
+                _exc_type.__name__ if _exc_type is not None else "?",
+                rq_job.id,
             )
             return
+
+        # Log the raw exception class AND the raw detail (str(exc_value)) here,
+        # server-side only. error_msg is the generic message the UI shows; the raw
+        # detail — which can carry ffmpeg / whisper-cli stderr and internal paths —
+        # stays in the operator log so debugging is unaffected while the user sees
+        # only the sanitised per-stage message.
+        logger.error(
+            "Pipeline failure for job %s (sub_job=%s generation=%s exception=%s detail=%r user_message=%r)",
+            parent_job_id,
+            rq_job.id,
+            meta_generation if meta_generation is not None else "-",
+            _exc_type.__name__ if _exc_type is not None else "?",
+            str(exc_value) if exc_value is not None else "-",
+            error_msg,
+        )
 
         ctx_store = PipelineContextStore(runtime.redis, parent_job_id)
         context = ctx_store.load()
