@@ -56,27 +56,54 @@ def test_whisper_collector_reports_status_counts_and_queue_depth(tmp_path):
         db.close()
 
 
-def test_scrape_leaves_an_abandoned_job_for_the_workers_to_clean_up(tmp_path):
-    """The route renders on a worker thread, where RQ cannot run the failure
-    callback of an abandoned job. Counting must not trigger that cleanup."""
+def _start_execution(redis, queue_name: str, *, expires_in: float):
+    """Put a STARTED job in the queue's started registry, as a worker would."""
     import time
 
     from rq import Queue
     from rq.job import JobStatus as RQJobStatus
     from rq.registry import StartedJobRegistry
 
+    job = Queue(queue_name, connection=redis).enqueue("math.sqrt", 4)
+    job.set_status(RQJobStatus.STARTED)
+    redis.zadd(StartedJobRegistry(queue_name, connection=redis).key, {f"{job.id}:execution": time.time() + expires_in})
+    return job
+
+
+def test_scrape_does_not_run_the_cleanup_of_an_abandoned_job(tmp_path):
+    """The route renders on a worker thread, where RQ cannot run the failure
+    callback of an abandoned job. The scrape must leave RQ's state alone."""
+    from rq.job import JobStatus as RQJobStatus
+    from rq.registry import StartedJobRegistry
+
     redis = fakeredis.FakeRedis()
     db = JobDatabase(tmp_path / "m.db")
     try:
-        abandoned = Queue("whisper:gpu", connection=redis).enqueue("math.sqrt", 4)
-        abandoned.set_status(RQJobStatus.STARTED)
-        registry = StartedJobRegistry("whisper:gpu", connection=redis)
-        redis.zadd(registry.key, {f"{abandoned.id}:execution": time.time() - 10})
+        abandoned = _start_execution(redis, "whisper:gpu", expires_in=-10)
+        registry_key = StartedJobRegistry("whisper:gpu", connection=redis).key
+
+        _scrape(db, redis)
+
+        assert abandoned.get_status(refresh=True) == RQJobStatus.STARTED
+        assert redis.zcard(registry_key) == 1
+    finally:
+        db.close()
+
+
+def test_started_jobs_counts_only_unexpired_executions(tmp_path):
+    """WhisperGpuQueueStalled fires on whisper_started_jobs == 0. The execution
+    of a worker that died must not hold the gauge above zero."""
+    redis = fakeredis.FakeRedis()
+    db = JobDatabase(tmp_path / "m.db")
+    try:
+        _start_execution(redis, "whisper:gpu", expires_in=-10)
+        _start_execution(redis, "whisper:io", expires_in=-10)
+        _start_execution(redis, "whisper:io", expires_in=60)
 
         out = _scrape(db, redis)
 
-        assert 'whisper_started_jobs{queue="whisper:gpu"} 1.0' in out
-        assert abandoned.get_status(refresh=True) == RQJobStatus.STARTED
+        assert 'whisper_started_jobs{queue="whisper:gpu"} 0.0' in out
+        assert 'whisper_started_jobs{queue="whisper:io"} 1.0' in out
     finally:
         db.close()
 
