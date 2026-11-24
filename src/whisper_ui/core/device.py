@@ -4,7 +4,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_SUPPORTED_DEVICES = {"cuda", "rocm", "cpu"}
 _CPU_INCOMPATIBLE_COMPUTE_TYPES = {"float16", "int8_float16"}
 
 

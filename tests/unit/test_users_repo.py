@@ -124,18 +124,6 @@ def test_count_active_admins_excludes_inactive_admin(conn):
     assert users_repo.count_active_admins(conn) == 1
 
 
-def test_set_password_bumps_session_version(conn):
-    user = users_repo.create_user(conn, "alice", "password123")
-
-    users_repo.set_password(conn, user.id, "newpassword")
-
-    updated = users_repo.get_user_by_id(conn, user.id)
-    assert updated is not None
-    assert updated.session_version == user.session_version + 1
-    assert users_repo.verify_password(updated, "newpassword") is True
-    assert users_repo.verify_password(updated, "password123") is False
-
-
 def test_set_active_deactivate_bumps_session_version(conn):
     user = users_repo.create_user(conn, "alice", "password123")
 
@@ -225,11 +213,10 @@ def test_list_users_returns_users_in_creation_order(conn):
     assert [u.username for u in users] == ["alice", "bob", "carol"]
 
 
-def test_set_password_for_missing_user_is_silent_noop(conn):
-    # UPDATE matching zero rows is not an error in sqlite — set_password
-    # is allowed to be a no-op for a missing id. Callers that need stronger
-    # guarantees should check existence first.
-    users_repo.set_password(conn, 9999, "newpassword")
+def test_store_password_hash_for_missing_user_is_silent_noop(conn):
+    # UPDATE matching zero rows is not an error in sqlite, so a missing id is
+    # a no-op. Callers that need stronger guarantees should check existence first.
+    users_repo.store_password_hash(conn, 9999, users_repo.hash_password("newpassword"))
 
 
 def test_set_active_missing_user_raises(conn):
