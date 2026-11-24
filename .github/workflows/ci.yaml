@@ -119,25 +119,42 @@ jobs:
       # hit it installs with --no-download and reaches no mirror. The
       # release is in the key because what apt has to fetch depends on what
       # the image already ships.
+      #
+      # Several image releases are in service at once, so a job often lands
+      # on one that has no cache yet (#293). restore-keys then falls back to
+      # the newest cache of the same OS. Its packages were resolved against
+      # another release, so the install from it is allowed to fail: only
+      # then does the job go to the mirror.
       - name: Read the runner image release
         id: runner-image
-        run: echo "release=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "os=${ImageOS:?}" >> "$GITHUB_OUTPUT"
+          echo "release=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
       - name: Cache ffmpeg's apt packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/apt-ffmpeg
           key: apt-ffmpeg-${{ steps.runner-image.outputs.release }}
+          restore-keys: |
+            apt-ffmpeg-${{ steps.runner-image.outputs.os }}-
       - name: Install ffmpeg
         run: |
           cache="$HOME/apt-ffmpeg"
-          if [ -d "$cache/lists" ]; then
+          install_from_cache() {
+            [ -d "$cache/lists" ] || return 1
             sudo rm -rf /var/lib/apt/lists
             sudo mkdir -p /var/lib/apt/lists/partial
             sudo cp -r "$cache/lists/." /var/lib/apt/lists/
             sudo cp "$cache"/archives/*.deb /var/cache/apt/archives/
-          else
-            # A miss still goes to the mirror, so bound each try and retry
-            # it rather than wait on a stalled download.
+            sudo apt-get install -y --no-download ffmpeg
+          }
+          if ! install_from_cache; then
+            echo "no usable ffmpeg cache for this image; downloading" >&2
+            # Drop what a failed attempt copied in, so the new cache holds
+            # only this release's packages.
+            sudo rm -f /var/cache/apt/archives/*.deb
+            # The mirror can stall, so bound each try and retry it rather
+            # than wait on a stalled download.
             for attempt in 1 2 3; do
               if sudo timeout 120 apt-get -o Acquire::Retries=3 update &&
                 sudo timeout 240 apt-get -o Acquire::Retries=3 install -y --download-only ffmpeg; then
@@ -146,13 +163,14 @@ jobs:
               if [ "$attempt" = 3 ]; then exit 1; fi
               echo "apt attempt $attempt failed or stalled; retrying" >&2
             done
+            sudo rm -rf "$cache"
             mkdir -p "$cache/archives"
             sudo cp -r /var/lib/apt/lists "$cache/lists"
             sudo rm -rf "$cache/lists/partial" "$cache/lists/lock"
             cp /var/cache/apt/archives/*.deb "$cache/archives/"
             sudo chown -R "$USER" "$cache"
+            sudo apt-get install -y --no-download ffmpeg
           fi
-          sudo apt-get install -y --no-download ffmpeg
           # The integration test skips when ffmpeg is missing, so a broken
           # install has to fail here instead of turning into a quiet skip.
           ffmpeg -hide_banner -version > /dev/null
