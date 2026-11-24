@@ -123,6 +123,29 @@ def insert_user(
     return user
 
 
+def insert_bootstrap_admin(conn: sqlite3.Connection, username: str, password_hash: str) -> User | None:
+    """Create the first admin, or return None when an active admin already exists.
+
+    The existence check and the insert are one statement, so however many
+    registrations race, on however many connections, at most one becomes the
+    bootstrap admin. Admins created later go through :func:`insert_user`.
+
+    Raises :class:`sqlite3.IntegrityError` when the username already exists.
+    """
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO users "
+        "(username, password_hash, is_admin, is_active, session_version, created_at, updated_at) "
+        "SELECT ?, ?, 1, 1, 0, ?, ? "
+        "WHERE NOT EXISTS (SELECT 1 FROM users WHERE is_admin = 1 AND is_active = 1)",
+        (username, password_hash, now, now),
+    )
+    conn.commit()
+    if cur.rowcount != 1:
+        return None
+    return get_user_by_id(conn, cur.lastrowid)
+
+
 def get_user_by_id(conn: sqlite3.Connection, user_id: int) -> User | None:
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return _row_to_user(row) if row else None
