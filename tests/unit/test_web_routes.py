@@ -1395,6 +1395,23 @@ class TestShareRoutes:
         assert deactivated.status_code == 404
         assert reactivated.status_code == 200
 
+    @pytest.mark.parametrize("path", ["", "/media"])
+    def test_shared_responses_are_never_stored(self, app, db, filestore, path):
+        """Whether a link works depends on the owner's account at request
+        time, so neither the content nor a 404 may be kept by a cache."""
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        anonymous = TestClient(app)
+
+        found = anonymous.get(f"/shared/{job.share_token}{path}")
+        missing = anonymous.get(f"/shared/unknown-token{path}")
+
+        assert found.status_code == 200
+        assert found.headers["cache-control"] == "no-store"
+        assert missing.status_code == 404
+        assert missing.headers["cache-control"] == "no-store"
+
     def test_shared_media_missing_source_returns_404(self, app, db, filestore):
         from fastapi.testclient import TestClient
 

@@ -14,6 +14,16 @@ from .viewer import _MEDIA_MIME_TYPES, _VIDEO_EXTENSIONS, _build_speaker_colors
 
 router = APIRouter(prefix="/shared")
 
+# Whether a link works depends on its owner's account at the time of the
+# request, so no cache may keep an answer: a stored 200 would outlive a
+# deactivation, a stored 404 a reactivation. The media is a FileResponse,
+# whose Last-Modified and ETag make it cacheable by heuristic otherwise.
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=404, headers=_NO_STORE)
+
 
 def _shared_job(db, share_token: str) -> Job | None:
     """Return the job behind a share link, or None when the link is not live.
@@ -33,11 +43,11 @@ def _shared_job(db, share_token: str) -> Job | None:
 async def shared_viewer(request: Request, share_token: str, db: DbDep, filestore: FileStoreDep):
     job = _shared_job(db, share_token)
     if job is None or job.status != JobStatus.COMPLETED:
-        raise HTTPException(status_code=404)
+        raise _not_found()
 
     result = await asyncio.to_thread(filestore.load_result, job.id)
     if result is None:
-        raise HTTPException(status_code=404)
+        raise _not_found()
 
     speaker_colors = _build_speaker_colors(result.segments)
     media_path = filestore.get_any_media_path(job.id, job.filepath)
@@ -47,6 +57,7 @@ async def shared_viewer(request: Request, share_token: str, db: DbDep, filestore
     return templates.TemplateResponse(
         request=request,
         name="shared_viewer.html",
+        headers=_NO_STORE,
         context={
             "job": job,
             "result": result,
@@ -62,11 +73,11 @@ async def shared_viewer(request: Request, share_token: str, db: DbDep, filestore
 async def shared_media(share_token: str, db: DbDep, filestore: FileStoreDep):
     job = _shared_job(db, share_token)
     if job is None:
-        raise HTTPException(status_code=404)
+        raise _not_found()
 
     media_path = filestore.get_any_media_path(job.id, job.filepath)
     if media_path is None or not media_path.is_file():
-        raise HTTPException(status_code=404)
+        raise _not_found()
 
     ext = media_path.suffix.lower()
     mime = _MEDIA_MIME_TYPES.get(ext, "application/octet-stream")
@@ -75,5 +86,5 @@ async def shared_media(share_token: str, db: DbDep, filestore: FileStoreDep):
     return FileResponse(
         path=media_path,
         media_type=mime,
-        headers={"Content-Disposition": make_content_disposition(filename, "inline")},
+        headers={"Content-Disposition": make_content_disposition(filename, "inline"), **_NO_STORE},
     )
