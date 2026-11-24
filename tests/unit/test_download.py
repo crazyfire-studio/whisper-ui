@@ -890,6 +890,18 @@ class TestTwitterDownload:
         assert cookies.read_text() == "# Netscape HTTP Cookie File\n"
         assert not seen["path"].exists()
 
+    def test_download_without_cookies_needs_no_temporary_directory(self, context, download_dir):
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = self._make_mock_ydl(download_dir)
+
+        with (
+            patch.dict("sys.modules", {"yt_dlp": mock_module}),
+            patch("tempfile.TemporaryDirectory", side_effect=OSError("no usable temporary directory")),
+        ):
+            result = DownloadStage().execute(context)
+
+        assert result["input_path"]
+
     def test_cookiefile_omitted_when_unset(self, context, download_dir):
         mock_module = MagicMock()
         mock_module.YoutubeDL.return_value = self._make_mock_ydl(download_dir)

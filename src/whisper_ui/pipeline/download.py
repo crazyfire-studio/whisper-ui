@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import tempfile
@@ -326,15 +327,18 @@ class DownloadStage:
             # writes straight to stderr; see whisper_ui.core.ytdlp_logging.
             "logger": YtDlpLogger(logger),
         }
-        with tempfile.TemporaryDirectory() as scratch:
+        with contextlib.ExitStack() as stack:
             # Operator-supplied login cookies (X login-walled / age-restricted
             # posts). Only set when the file actually exists, so an unset/missing
             # path stays an anonymous attempt rather than failing the download.
             # yt-dlp writes the jar back to its cookiefile on close, so it gets
             # a private copy: the operator's file is mounted read-only, and
-            # parallel downloads must not overwrite each other's jar.
-            # copyfile, not copy: the copy must not inherit a read-only mode.
+            # parallel downloads must not overwrite each other's jar. The
+            # temporary directory is only created for a download that uses
+            # cookies. copyfile, not copy: the copy must not inherit a
+            # read-only mode.
             if cookiefile:
+                scratch = stack.enter_context(tempfile.TemporaryDirectory())
                 ydl_opts["cookiefile"] = shutil.copyfile(cookiefile, Path(scratch) / "cookies.txt")
 
             try:
