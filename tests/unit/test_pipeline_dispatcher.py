@@ -1692,6 +1692,80 @@ def test_is_pipeline_dead_true_when_all_subjobs_terminal(tmp_path):
     assert pd.is_pipeline_dead(redis, job.id) is True
 
 
+def test_is_pipeline_dead_true_when_only_deferred_subjobs_remain(tmp_path):
+    """A sub-job failed without its failure callback cancelling the rest, so
+    the dependents stay DEFERRED. RQ never expires those; nothing can run."""
+    from rq.job import JobStatus as RQJobStatus
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    redis = fakeredis.FakeRedis()
+    job = Job(id="job-deferred", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
+    enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
+    subs = _by_stage(_load_subjobs(redis, job.id))
+    subs["run_preprocess"].set_status(RQJobStatus.FAILED)
+
+    assert subs["run_postprocess"].get_status(refresh=True) == RQJobStatus.DEFERRED
+    assert pd.is_pipeline_dead(redis, job.id) is True
+
+
+def test_stale_check_during_a_stage_handoff_does_not_bump_the_generation(tmp_path, monkeypatch):
+    """A worker finishes preprocess while the reaper is looking at the job.
+    RQ commits FINISHED and the hand-over of the dependents in one transaction,
+    so the reaper must read every sub-job in one transaction too. Read one by
+    one, it could see transcribe still DEFERRED and then preprocess already
+    FINISHED, call the pipeline dead and bump the generation, which turns the
+    callbacks of the still-running attempt into stale ones.
+    """
+    from rq.job import JobStatus as RQJobStatus
+
+    from whisper_ui.worker import pipeline_dispatcher as pd
+
+    class HandoffAfterFirstStatusRead(fakeredis.FakeRedis):
+        """Completes the handoff right after one sub-job's status is read on
+        its own, outside a transaction."""
+
+        handoff = None
+
+        def hget(self, name, key):
+            value = super().hget(name, key)
+            if key == "status" and self.handoff is not None:
+                handoff, self.handoff = self.handoff, None
+                handoff()
+            return value
+
+    from whisper_ui.storage.database import JobDatabase
+
+    redis = HandoffAfterFirstStatusRead()
+    db = JobDatabase(tmp_path / "stale.db")
+    try:
+        job = Job(id="job-handoff", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
+        job.updated_at = "2000-01-01T00:00:00+00:00"
+        db.insert_job(job)
+        enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
+        subs = _by_stage(_load_subjobs(redis, job.id))
+        subs["run_preprocess"].set_status(RQJobStatus.STARTED)
+
+        def finish_preprocess():
+            subs["run_preprocess"].set_status(RQJobStatus.FINISHED)
+            subs["run_transcribe_align"].set_status(RQJobStatus.QUEUED)
+
+        redis.handoff = finish_preprocess
+        # The dependent first: a set returns its members in no particular order.
+        dependent = subs["run_transcribe_align"].id
+        ordered = [dependent, *(sub.id for sub in subs.values() if sub.id != dependent)]
+        monkeypatch.setattr(pd, "_load_subjob_ids", lambda *_args: ordered)
+        generation = pd._current_generation(redis, job.id)
+
+        recovered = pd.recover_stale_pipeline_jobs(db, redis, timeout_seconds=60, error_message="stale")
+
+        assert recovered == 0
+        assert pd._current_generation(redis, job.id) == generation
+        assert db.get_job(job.id).status == JobStatus.PROCESSING
+    finally:
+        db.close()
+
+
 def test_is_pipeline_dead_true_when_generation_missing(tmp_path):
     """No generation counter (never enqueued / expired) → nothing to keep the
     pipeline alive → treated as dead."""
@@ -1842,7 +1916,7 @@ def test_recover_stale_pipeline_jobs_propagates_redis_error_without_reaping(tmp_
         def _raise_redis(*args, **kwargs):
             raise RedisError("connection reset")
 
-        monkeypatch.setattr("rq.job.Job.fetch", _raise_redis)
+        monkeypatch.setattr("rq.job.Job.fetch_many", _raise_redis)
 
         with pytest.raises(RedisError):
             pd.recover_stale_pipeline_jobs(db, redis, timeout_seconds=60, error_message=JOBS_STALE_ERROR)
@@ -1863,8 +1937,8 @@ def test_is_pipeline_dead_treats_missing_subjob_as_dead_branch(tmp_path):
     job = Job(id="job-gone", filename="m.mp3", filepath=str(tmp_path / "m.mp3"), status=JobStatus.PROCESSING)
     enqueue_pipeline(job, redis=redis, settings=_build_settings(ollama=""), filestore=_build_filestore(tmp_path))
 
-    # Remove every RQ job hash so RQJob.fetch raises NoSuchJobError (while the
-    # sub-job id set still lists them).
+    # Remove every RQ job hash so the sub-jobs can no longer be fetched (while
+    # the sub-job id set still lists them).
     for sub in _load_subjobs(redis, job.id):
         sub.delete()
 

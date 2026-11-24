@@ -691,9 +691,13 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     """Return True when a QUEUED/PROCESSING parent has no live RQ work left.
 
     "Live" means at least one current-generation sub-job is still queued,
-    deferred, ready to enqueue, scheduled, or started. A parent whose sub-jobs are all finished,
+    ready to enqueue, scheduled, or started. A parent whose sub-jobs are all finished,
     failed, cancelled, or gone has nothing progressing it and is a genuine
-    stale/dead pipeline. A job merely waiting in a backed-up queue is ALIVE and
+    stale/dead pipeline. Deferred sub-jobs alone do not count: a deferred
+    sub-job only ever runs after one of the live ones finishes, and RQ never
+    expires it, so a pipeline with nothing but deferred sub-jobs left (its
+    failure callback never ran) would otherwise be spared forever.
+    A job merely waiting in a backed-up queue is ALIVE and
     must not be reaped — that is the whole point of moving the stale reaper from
     wall-age to liveness, so a slow single-worker box stops mass-failing a
     healthy batch whose tail simply has not been reached yet.
@@ -703,7 +707,6 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     death-penalty ``job_timeout``); treating STARTED as live therefore only ever
     errs toward sparing a job, never toward failing a healthy one.
     """
-    from rq.exceptions import NoSuchJobError
     from rq.job import Job as RQJob
     from rq.job import JobStatus as RQJobStatus
 
@@ -716,24 +719,22 @@ def is_pipeline_dead(redis: Redis, parent_job_id: str) -> bool:
     live = {
         RQJobStatus.QUEUED,
         RQJobStatus.STARTED,
-        RQJobStatus.DEFERRED,
         RQJobStatus.READY_TO_ENQUEUE,
         RQJobStatus.SCHEDULED,
     }
-    for sub_id in sub_ids:
-        try:
-            status = RQJob.fetch(sub_id, connection=redis).get_status(refresh=True)
-        except NoSuchJobError:
-            # The sub-job hash is genuinely gone → that branch is dead; keep
-            # checking the rest. Only NoSuchJobError is swallowed: a transient
-            # redis.exceptions.RedisError must NOT be treated as "dead" (that
-            # would mark a live, queued job FAILED on a Redis blip) — it
-            # propagates so the stale checker's outer handler logs it and skips
-            # this round, leaving every candidate untouched.
-            continue
-        if status in live:
-            return False
-    return True
+    # One transaction for every sub-job. RQ commits "this job finished" and
+    # "its dependents are ready" together, so a single snapshot never shows a
+    # pipeline between stages as having nothing runnable. Reading the sub-jobs
+    # one by one could see a dependent still DEFERRED, then its dependency
+    # already FINISHED, and miss that the dependent had been queued in between.
+    #
+    # A sub-job whose hash is gone comes back as None: that branch is dead.
+    # A redis.exceptions.RedisError must NOT be treated as "dead" (that would
+    # mark a live, queued job FAILED on a Redis blip) — it propagates so the
+    # stale checker's outer handler logs it and skips this round, leaving
+    # every candidate untouched.
+    subs = RQJob.fetch_many(sub_ids, connection=redis)
+    return not any(sub is not None and sub.get_status(refresh=False) in live for sub in subs)
 
 
 def recover_stale_pipeline_jobs(
