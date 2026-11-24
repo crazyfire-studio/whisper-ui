@@ -119,9 +119,25 @@ def test_whitespace_value_does_not_inject_extra_queue(tmp_path: Path) -> None:
     assert argv.rstrip().endswith("whisper:gpu")
 
 
-def test_worker_name_carries_the_start_time(tmp_path: Path) -> None:
-    # RQ rejects a name that is still registered without a death mark, so a
-    # restart in the same container must not reuse the previous name.
-    argv = _argv_line(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+def _worker_name(result: subprocess.CompletedProcess[str]) -> str:
+    match = re.search(r"--name (\S+) ", _argv_line(result))
+    assert match is not None
+    return match.group(1)
 
-    assert re.search(r"--name whisper-worker-\S+-\d{10,} ", argv)
+
+def test_each_start_gets_its_own_worker_name(tmp_path: Path) -> None:
+    # RQ rejects a name that is still registered without a death mark, so a
+    # restart in the same container must not reuse the previous name, however
+    # quickly it follows.
+    first = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+    second = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+
+    assert first != second
+
+
+def test_worker_name_keeps_the_hostname(tmp_path: Path) -> None:
+    hostname = subprocess.run(["hostname"], capture_output=True, text=True, check=True).stdout.strip()
+
+    name = _worker_name(_run_entrypoint(tmp_path, {"DEVICE": "cuda"}))
+
+    assert re.fullmatch(rf"whisper-worker-{re.escape(hostname)}-[0-9a-f-]{{36}}", name)
