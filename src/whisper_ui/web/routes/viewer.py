@@ -168,8 +168,7 @@ async def share_create(request: Request, job_id: str, db: DbDep, user: CurrentUs
         raise HTTPException(status_code=404)
 
     if not job.share_token:
-        job.share_token = secrets.token_urlsafe(16)
-        db.update_job(job)
+        db.set_share_token(job.id, secrets.token_urlsafe(16))
 
     # HX-Refresh reloads the page, so the toast travels as a session flash:
     # an HX-Trigger event would be lost, and its non-latin-1 text cannot be
@@ -186,8 +185,7 @@ async def share_revoke(job_id: str, db: DbDep, user: CurrentUserDep):
         raise HTTPException(status_code=404)
 
     if job.share_token:
-        job.share_token = None
-        db.update_job(job)
+        db.set_share_token(job.id, None)
 
     return Response(
         status_code=200,
