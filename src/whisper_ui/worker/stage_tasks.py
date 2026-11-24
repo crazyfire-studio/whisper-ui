@@ -102,9 +102,8 @@ def _mark_processing_if_queued(runtime: WorkerRuntime, job: Job) -> None:
     Multiple sub-jobs can be the "first" one to actually run (e.g.
     transcribe_align and diarize start in parallel after preprocess), so
     every stage task idempotently promotes the job when it observes
-    QUEUED. The SQLite write path serialises concurrent writers via WAL
-    mode + busy_timeout, so two parallel branches flipping simultaneously
-    converge on the same PROCESSING state without corrupting the row.
+    QUEUED. The UPDATE is conditional on the row still being QUEUED, so a
+    stage that starts after the job turned terminal cannot move it back.
 
     This guards two downstream behaviours that depend on the
     QUEUED → PROCESSING transition:
@@ -118,8 +117,7 @@ def _mark_processing_if_queued(runtime: WorkerRuntime, job: Job) -> None:
     - Dashboard polling speed and status badges branch on PROCESSING.
     """
     if job.status == JobStatus.QUEUED:
-        job.status = JobStatus.PROCESSING
-        runtime.db.update_job(job)
+        runtime.db.mark_processing(job.id)
 
 
 def _banded_progress(

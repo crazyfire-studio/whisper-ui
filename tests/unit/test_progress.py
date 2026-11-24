@@ -507,7 +507,7 @@ class TestThrottledProgressReporter:
         on_progress, reporter, db, _job, _clock = _make_throttle()
         on_progress(0.0, "starting")
         reporter.report.assert_called_once_with(0.0, "starting")
-        db.update_job.assert_called_once()
+        db.update_job_progress.assert_called_once()
 
     def test_drops_tiny_delta_inside_interval(self):
         on_progress, reporter, db, _job, clock = _make_throttle()
@@ -516,7 +516,7 @@ class TestThrottledProgressReporter:
         clock.advance(0.1)
         on_progress(0.101, "stage")
         assert reporter.report.call_count == 1
-        assert db.update_job.call_count == 1
+        assert db.update_job_progress.call_count == 1
 
     def test_writes_after_enough_delta(self):
         on_progress, reporter, _db, _job, clock = _make_throttle()
@@ -635,9 +635,10 @@ class TestThrottledProgressReporter:
         assert job.progress_message == ""
 
     def test_throttle_proceeds_when_reporter_accepts_write(self):
-        """Sanity pair for the test above: when the reporter returns
-        ACCEPTED (legacy max-write, reset branch, or current generation
-        match) the throttler still full-mirrors to SQLite as before.
+        """Sanity pair for the test above: an ACCEPTED write is mirrored to
+        SQLite, and only as the progress columns. A full-column update from
+        this stage's snapshot could undo a status a sibling stage's failure
+        just wrote.
         """
         on_progress, reporter, db, job, _clock = _make_throttle()
         reporter.report.return_value = ProgressWriteOutcome.ACCEPTED
@@ -645,15 +646,13 @@ class TestThrottledProgressReporter:
         on_progress(0.42, "running")
 
         reporter.report.assert_called_once_with(0.42, "running")
-        db.update_job.assert_called_once_with(job)
-        assert job.progress == 0.42
-        assert job.progress_message == "running"
+        db.update_job.assert_not_called()
+        db.update_job_progress.assert_called_once_with(job.id, 0.42, "running")
 
     def test_throttle_degraded_uses_field_level_update(self):
-        """On a Redis outage (DEGRADED) the mirror must fall back to the
-        progress-only field-level UPDATE, never the full-column update_job —
-        so a possibly-stale writer during the outage cannot clobber a
-        COMPLETED row's status / result_path / error.
+        """On a Redis outage (DEGRADED) generation gating cannot be checked,
+        so a possibly-stale writer must not be able to clobber a COMPLETED
+        row's status / result_path / error.
         """
         on_progress, reporter, db, job, _clock = _make_throttle()
         reporter.report.return_value = ProgressWriteOutcome.DEGRADED
@@ -670,7 +669,7 @@ class TestThrottledProgressReporter:
         """
         on_progress, reporter, db, _job, _clock = _make_throttle()
         reporter.report.return_value = ProgressWriteOutcome.ACCEPTED
-        db.update_job.side_effect = sqlite3.OperationalError("database is locked")
+        db.update_job_progress.side_effect = sqlite3.OperationalError("database is locked")
 
         on_progress(0.42, "running")  # must not raise
 

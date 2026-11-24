@@ -313,21 +313,44 @@ class JobDatabase:
         self._conn.commit()
 
     def update_job_progress(self, job_id: str, progress: float, message: str) -> None:
-        """Persist only the progress fields, never status/result_path/error.
+        """Persist the progress fields of a job that is still QUEUED or PROCESSING.
 
-        The full-column :meth:`update_job` overwrites every column from an
-        in-memory snapshot, which is only safe once generation gating has
-        confirmed the writer owns the current attempt. During a Redis outage
-        gating cannot be checked, so the progress mirror falls back to this
-        targeted UPDATE: a stale writer can at worst nudge the progress number,
-        never resurrect a COMPLETED row to PROCESSING or drop its result_path.
-        ``updated_at`` is refreshed so an actively-reporting job is not falsely
-        reaped as stale.
+        Stage tasks hold a snapshot of the row from when they started, and
+        sibling stages run in other processes. A full-column :meth:`update_job`
+        from such a snapshot can undo a status another process just wrote, so
+        the progress mirror writes these columns alone. A terminal job is left
+        untouched: a late report must not replace its final message, nor move
+        ``updated_at``, which is its completion time. For an active job
+        ``updated_at`` is refreshed so it is not falsely reaped as stale.
         """
         self._conn.execute(
-            "UPDATE jobs SET progress = ?, progress_message = ?, updated_at = ? WHERE id = ?",
-            (progress, message, datetime.now(UTC).isoformat(), job_id),
+            "UPDATE jobs SET progress = ?, progress_message = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)",
+            (
+                progress,
+                message,
+                datetime.now(UTC).isoformat(),
+                job_id,
+                JobStatus.QUEUED.value,
+                JobStatus.PROCESSING.value,
+            ),
         )
+        self._conn.commit()
+
+    def mark_processing(self, job_id: str) -> None:
+        """Move a QUEUED job to PROCESSING; a job in any other status is left alone."""
+        self._conn.execute(
+            "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+            (JobStatus.PROCESSING.value, datetime.now(UTC).isoformat(), job_id, JobStatus.QUEUED.value),
+        )
+        self._conn.commit()
+
+    def set_share_token(self, job_id: str, share_token: str | None) -> None:
+        """Set or clear the share token.
+
+        ``updated_at`` is left alone: it marks when the job completed, which
+        the retention sweep and the per-day completion counts both read.
+        """
+        self._conn.execute("UPDATE jobs SET share_token = ? WHERE id = ?", (share_token, job_id))
         self._conn.commit()
 
     def list_jobs_by_batch(self, batch_id: str, *, owner_id: int | None = None) -> list[Job]:
