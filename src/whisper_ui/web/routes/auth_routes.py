@@ -338,17 +338,15 @@ async def register_submit(
         rate_limit.record_register_attempt(redis, ip=ip, window_seconds=settings.login_lockout_seconds)
 
     password_hash = await asyncio.to_thread(users_repo.hash_password, password)
-    # The hash ran off the event loop, so another bootstrap may have finished
-    # meanwhile. Nothing awaits between this check and the insert.
-    if bootstrap and users_repo.count_active_admins(db.conn) != 0:
-        return _redirect_after_auth(request, "/register")
     try:
-        user = users_repo.insert_user(
-            db.conn,
-            username=username,
-            password_hash=password_hash,
-            is_admin=bootstrap,
-        )
+        if bootstrap:
+            # ``bootstrap`` was decided before the hash ran off the event loop;
+            # the insert itself re-checks that no admin exists yet.
+            user = users_repo.insert_bootstrap_admin(db.conn, username, password_hash)
+            if user is None:
+                return _redirect_after_auth(request, "/register")
+        else:
+            user = users_repo.insert_user(db.conn, username=username, password_hash=password_hash)
     except sqlite3.IntegrityError:
         # Log the real reason for operators, but show the user a generic
         # message (see _register_error_message) so /register does not confirm
