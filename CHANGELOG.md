@@ -7,6 +7,36 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-11-24
+
+Share links stop working while their owner is deactivated, and are no longer
+stored by caches.
+
+### Deploy notes
+
+- No `.env` change.
+
+### Security
+
+- A share link answers 404 while the owner of the transcript is deactivated,
+  for both the page and the media; reactivating the account brings back links
+  that were not revoked. Jobs without an owner, from before accounts existed,
+  are unaffected (#299).
+- Share pages, shared media and their 404s send `Cache-Control: no-store`, so
+  a cache in front of the app cannot keep serving a link after deactivation
+  (#299).
+
+### Documentation
+
+- The README and `SECURITY.md` describe share links: who can create one, what
+  it opens, that it has no expiry, and what ends it (#299).
+
+### Development
+
+- uv 0.13.9, which writes `uv.lock` in the same format as Dependabot, and
+  `lint-and-test` installs with `uv sync --locked`, so a dependency change
+  committed without relocking fails CI (#297).
+
 ## [3.1.1] - 2026-11-24
 
 Fixes from a whole-project review: jobs that could stay in processing or change
@@ -1292,7 +1322,8 @@ Error` JSON body while logging the full traceback, so an
   classification, missing-job handling) are now covered by unit tests
   in `test_pipeline_dispatcher.py` and `test_stage_tasks.py`.
 
-[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.1.1...HEAD
+[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.1.2...HEAD
+[3.1.2]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.2
 [3.1.1]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.1
 [3.1.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.0
 [3.0.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.0.0
