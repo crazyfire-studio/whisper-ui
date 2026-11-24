@@ -428,7 +428,7 @@ def test_parallel_branch_progress_never_regresses_in_redis(monkeypatch, fake_red
     the same parent job_id from different threads with interleaved
     progress values; the final stored progress must equal the highest
     value any branch ever reported, and the full write history — read
-    back via ``RedisProgressReporter.get_progress`` after each call —
+    back via ``RedisProgressReporter.get_progress_batch`` after each call —
     must never show a regression.
 
     This is the PR #39 review fix for R2 (Gemini + user): the previous
