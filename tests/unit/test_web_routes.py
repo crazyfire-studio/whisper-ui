@@ -1376,6 +1376,25 @@ class TestShareRoutes:
         assert resp.status_code == 200
         assert resp.content == b"original audio bytes"
 
+    @pytest.mark.parametrize("path", ["", "/media"])
+    def test_share_link_stops_working_while_its_owner_is_deactivated(self, app, db, filestore, test_user, path):
+        from fastapi.testclient import TestClient
+
+        from whisper_ui.storage import users_repo
+
+        job = _create_shared_job(db, filestore)
+        job.owner_id = test_user.id
+        db.update_job(job)
+        anonymous = TestClient(app)
+
+        users_repo.set_active(db.conn, test_user.id, active=False)
+        deactivated = anonymous.get(f"/shared/{job.share_token}{path}")
+        users_repo.set_active(db.conn, test_user.id, active=True)
+        reactivated = anonymous.get(f"/shared/{job.share_token}{path}")
+
+        assert deactivated.status_code == 404
+        assert reactivated.status_code == 200
+
     def test_shared_media_missing_source_returns_404(self, app, db, filestore):
         from fastapi.testclient import TestClient
 

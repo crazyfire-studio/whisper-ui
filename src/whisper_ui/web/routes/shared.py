@@ -6,7 +6,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
-from whisper_ui.core.models import JobStatus
+from whisper_ui.core.models import Job, JobStatus
+from whisper_ui.storage import users_repo
 from whisper_ui.web.deps import DbDep, FileStoreDep, make_content_disposition, templates
 
 from .viewer import _MEDIA_MIME_TYPES, _VIDEO_EXTENSIONS, _build_speaker_colors
@@ -14,9 +15,23 @@ from .viewer import _MEDIA_MIME_TYPES, _VIDEO_EXTENSIONS, _build_speaker_colors
 router = APIRouter(prefix="/shared")
 
 
+def _shared_job(db, share_token: str) -> Job | None:
+    """Return the job behind a share link, or None when the link is not live.
+
+    A link stops working while its owner is deactivated, so deactivating an
+    account also cuts off what it shared. Jobs from before accounts existed
+    have no owner; only admins can see and share them.
+    """
+    job = db.get_job_by_share_token(share_token)
+    if job is None or job.owner_id is None:
+        return job
+    owner = users_repo.get_user_by_id(db.conn, job.owner_id)
+    return job if owner is not None and owner.is_active else None
+
+
 @router.get("/{share_token}", response_class=HTMLResponse)
 async def shared_viewer(request: Request, share_token: str, db: DbDep, filestore: FileStoreDep):
-    job = db.get_job_by_share_token(share_token)
+    job = _shared_job(db, share_token)
     if job is None or job.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=404)
 
@@ -45,7 +60,7 @@ async def shared_viewer(request: Request, share_token: str, db: DbDep, filestore
 
 @router.get("/{share_token}/media")
 async def shared_media(share_token: str, db: DbDep, filestore: FileStoreDep):
-    job = db.get_job_by_share_token(share_token)
+    job = _shared_job(db, share_token)
     if job is None:
         raise HTTPException(status_code=404)
 
