@@ -1396,6 +1396,27 @@ class TestShareRoutes:
         assert reactivated.status_code == 200
 
     @pytest.mark.parametrize("path", ["", "/media"])
+    @pytest.mark.parametrize(
+        ("owner", "status"),
+        [("none", 200), ("missing", 404)],
+        ids=["job-without-owner-is-shared", "owner-row-gone-is-not"],
+    )
+    def test_share_link_follows_the_owner_column(self, app, db, filestore, path, owner, status):
+        """The app fixture gives every inserted job an owner, so set the column
+        afterwards: jobs from before accounts existed have NULL, and an owner id
+        whose user row is gone must not keep the link alive."""
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        owner_id = None if owner == "none" else 999_999
+        db.conn.execute("UPDATE jobs SET owner_id = ? WHERE id = ?", (owner_id, job.id))
+        db.conn.commit()
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}{path}")
+
+        assert resp.status_code == status
+
+    @pytest.mark.parametrize("path", ["", "/media"])
     def test_shared_responses_are_never_stored(self, app, db, filestore, path):
         """Whether a link works depends on the owner's account at request
         time, so neither the content nor a 404 may be kept by a cache."""
