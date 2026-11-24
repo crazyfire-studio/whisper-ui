@@ -34,7 +34,11 @@ deployment:
   (`web/rate_limit.py`, `web/routes/auth_routes.py`).
 - **Per-user authorization**: jobs are scoped to their `owner_id`; non-admin
   users only see their own transcripts, downloads, and delete actions
-  (`web/routes/jobs.py`, `web/routes/viewer.py`).
+  (`web/routes/jobs.py`, `web/routes/viewer.py`). The exception is a share
+  link, which the owner or an admin creates for one completed transcript:
+  anyone holding it can read that transcript and play its media without
+  signing in, until the link is revoked or while the owner is deactivated
+  (`web/routes/shared.py`).
 - **Session revocation**: each user row carries a `session_version` that is
   bumped on password reset or account deactivation, invalidating any
   outstanding session cookie.
@@ -111,6 +115,10 @@ documented here so they are explicit rather than surprises:
   14-day `max_age` expires. Admin password reset / account deactivation _do_
   bump `session_version` and revoke immediately. On shared machines, close the
   browser session; for immediate revocation, an admin can reset the password.
+- **Share links do not expire.** A link works until its owner or an admin
+  revokes it, or while the owner's account is deactivated. Revoke a link when
+  it is no longer needed; the token is in the URL, so anyone it was forwarded
+  to can use it.
 - **Session cookie `Secure` defaults off.** The bundled compose profiles serve
   plain HTTP, so `SESSION_HTTPS_ONLY` defaults to `false`. Set it to `true`
   behind TLS so the cookie is only sent over HTTPS.
