@@ -82,11 +82,27 @@ class WhisperCollector:
         try:
             from rq import Queue, Worker
             from rq.registry import FailedJobRegistry, StartedJobRegistry
+            from rq.utils import current_timestamp
 
+            # A registry scores each entry with its expiry time, and RQ treats
+            # a score equal to the current time as expired, hence the
+            # exclusive lower bound. Counting the unexpired entries reads what
+            # ``registry.count`` reports without its cleanup, which must not
+            # run here: it fires the failure callbacks of abandoned jobs, and
+            # RQ arms their timeout with a signal handler, which only works on
+            # the main thread. On this thread the callback would be skipped
+            # and the sub-job failed anyway, stranding the pipeline. An
+            # expired entry belongs to a worker that died, so it is not
+            # in-flight; the workers' own maintenance removes it.
+            unexpired = f"({current_timestamp()}"
             for name in _QUEUES:
                 depth.add_metric([name], len(Queue(name, connection=self._redis)))
-                failed.add_metric([name], FailedJobRegistry(name, connection=self._redis).count)
-                started.add_metric([name], StartedJobRegistry(name, connection=self._redis).count)
+                failed.add_metric(
+                    [name], self._redis.zcount(FailedJobRegistry(name, connection=self._redis).key, unexpired, "+inf")
+                )
+                started.add_metric(
+                    [name], self._redis.zcount(StartedJobRegistry(name, connection=self._redis).key, unexpired, "+inf")
+                )
             workers.add_metric([], len(Worker.all(connection=self._redis)))
         except Exception:
             # Redis unreachable / RQ error → skip these gauges, keep the scrape healthy.
