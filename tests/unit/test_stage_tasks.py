@@ -321,8 +321,7 @@ def test_stage_task_transitions_queued_parent_job_to_processing(monkeypatch):
     with patch("whisper_ui.worker.stage_tasks.PreprocessStage", return_value=fake_stage):
         run_preprocess("job-queued")
 
-    assert job.status == JobStatus.PROCESSING
-    runtime.db.update_job.assert_any_call(job)
+    runtime.db.mark_processing.assert_called_once_with("job-queued")
 
 
 def test_stage_task_leaves_already_processing_job_alone(monkeypatch):
@@ -338,11 +337,7 @@ def test_stage_task_leaves_already_processing_job_alone(monkeypatch):
     with patch("whisper_ui.worker.stage_tasks.DiarizeStage", return_value=fake_stage):
         run_diarize("job-proc")
 
-    # update_job must not be called for a status flip (no QUEUED-to-PROCESSING
-    # transition happened). The diarize stage itself does not write status,
-    # so update_job should not have been called at all here.
-    for call in runtime.db.update_job.call_args_list:
-        assert call.args[0].status == JobStatus.PROCESSING
+    runtime.db.mark_processing.assert_not_called()
 
 
 def test_run_transcribe_align_also_transitions_queued_to_processing(monkeypatch):
@@ -352,7 +347,7 @@ def test_run_transcribe_align_also_transitions_queued_to_processing(monkeypatch)
     """
     fake_redis = fakeredis.FakeRedis()
     job = Job(id="job-ta", status=JobStatus.QUEUED, filepath="/tmp/a.mp3")
-    _install_fake_runtime(monkeypatch, fake_redis, job)
+    runtime = _install_fake_runtime(monkeypatch, fake_redis, job)
     PipelineContextStore(fake_redis, "job-ta").initialize({"audio_path": "/tmp/16k.wav"})
 
     fake_transcribe = _RecordingStage({"transcription_result": {"segments": []}})
@@ -366,7 +361,7 @@ def test_run_transcribe_align_also_transitions_queued_to_processing(monkeypatch)
     ):
         run_transcribe_align("job-ta")
 
-    assert job.status == JobStatus.PROCESSING
+    runtime.db.mark_processing.assert_called_once_with("job-ta")
 
 
 def test_run_transcribe_align_logs_stage_start_and_finish(monkeypatch, caplog):
