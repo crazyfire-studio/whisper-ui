@@ -296,7 +296,10 @@ def test_insert_bootstrap_admin_admits_one_of_two_racing_connections(settings):
         for thread in threads:
             thread.join()
 
-        assert sum(user is not None for user in created) == 1
+        # Both calls must return: a thread that raised would leave ``created``
+        # short, and one success would still satisfy a count of successes.
+        assert len(created) == 2
+        assert created.count(None) == 1
         assert users_repo.count_active_admins(databases[0].conn) == 1
     finally:
         for database in databases:
