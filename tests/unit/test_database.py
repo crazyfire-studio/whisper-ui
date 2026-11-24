@@ -110,27 +110,42 @@ def test_set_share_token_keeps_updated_at(db: JobDatabase):
     assert db.get_job(job.id).share_token is None
 
 
-def test_update_job_progress_only_touches_progress_fields(db: JobDatabase):
-    """The field-level progress mirror must never overwrite status /
-    result_path / error — that is what makes it safe to use during a Redis
-    outage when generation gating cannot be verified. A COMPLETED job with a
-    result must stay COMPLETED with its result even if a stale writer nudges
-    its progress.
-    """
-    job = Job(filename="test.mp3", filepath="/tmp/test.mp3")
-    job.status = JobStatus.COMPLETED
+@pytest.mark.parametrize("status", [JobStatus.COMPLETED, JobStatus.FAILED])
+def test_update_job_progress_leaves_a_terminal_job_untouched(db: JobDatabase, status: JobStatus):
+    """A late report from a sibling stage, or from a stale writer during a
+    Redis outage, must not change a finished job: updated_at is its completion
+    time, read by the retention sweep and the per-day completion counts."""
+    job = Job(filename="test.mp3", filepath="/tmp/test.mp3", status=status)
     job.progress = 1.0
+    job.progress_message = "final"
+    db.insert_job(job)
+
+    db.update_job_progress(job.id, 0.5, "late heartbeat")
+
+    fetched = db.get_job(job.id)
+    assert fetched.progress == 1.0
+    assert fetched.progress_message == "final"
+    assert fetched.updated_at == job.updated_at
+    assert fetched.status == status
+
+
+def test_update_job_progress_only_touches_progress_fields(db: JobDatabase):
+    """The progress mirror must never overwrite status / result_path / error,
+    whatever snapshot the writer holds."""
+    job = Job(filename="test.mp3", filepath="/tmp/test.mp3", status=JobStatus.PROCESSING)
+    job.error = "kept"
     job.result_path = "/out/result.json"
     db.insert_job(job)
 
-    db.update_job_progress(job.id, 0.5, "stale heartbeat")
+    db.update_job_progress(job.id, 0.5, "transcribing")
 
     fetched = db.get_job(job.id)
     assert fetched is not None
     assert fetched.progress == 0.5
-    assert fetched.progress_message == "stale heartbeat"
-    # Untouched: the fields a stale full-column overwrite would have clobbered.
-    assert fetched.status == JobStatus.COMPLETED
+    assert fetched.progress_message == "transcribing"
+    assert fetched.updated_at > job.updated_at
+    assert fetched.status == JobStatus.PROCESSING
+    assert fetched.error == "kept"
     assert fetched.result_path == "/out/result.json"
 
 

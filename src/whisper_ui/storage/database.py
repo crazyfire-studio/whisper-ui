@@ -313,18 +313,26 @@ class JobDatabase:
         self._conn.commit()
 
     def update_job_progress(self, job_id: str, progress: float, message: str) -> None:
-        """Persist only the progress fields, never status/result_path/error.
+        """Persist the progress fields of a job that is still QUEUED or PROCESSING.
 
         Stage tasks hold a snapshot of the row from when they started, and
         sibling stages run in other processes. A full-column :meth:`update_job`
         from such a snapshot can undo a status another process just wrote, so
-        the progress mirror writes these columns alone: a late writer can at
-        worst nudge the progress number. ``updated_at`` is refreshed so an
-        actively-reporting job is not falsely reaped as stale.
+        the progress mirror writes these columns alone. A terminal job is left
+        untouched: a late report must not replace its final message, nor move
+        ``updated_at``, which is its completion time. For an active job
+        ``updated_at`` is refreshed so it is not falsely reaped as stale.
         """
         self._conn.execute(
-            "UPDATE jobs SET progress = ?, progress_message = ?, updated_at = ? WHERE id = ?",
-            (progress, message, datetime.now(UTC).isoformat(), job_id),
+            "UPDATE jobs SET progress = ?, progress_message = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)",
+            (
+                progress,
+                message,
+                datetime.now(UTC).isoformat(),
+                job_id,
+                JobStatus.QUEUED.value,
+                JobStatus.PROCESSING.value,
+            ),
         )
         self._conn.commit()
 
