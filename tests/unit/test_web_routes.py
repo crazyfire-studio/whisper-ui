@@ -1376,6 +1376,63 @@ class TestShareRoutes:
         assert resp.status_code == 200
         assert resp.content == b"original audio bytes"
 
+    @pytest.mark.parametrize("path", ["", "/media"])
+    def test_share_link_stops_working_while_its_owner_is_deactivated(self, app, db, filestore, test_user, path):
+        from fastapi.testclient import TestClient
+
+        from whisper_ui.storage import users_repo
+
+        job = _create_shared_job(db, filestore)
+        job.owner_id = test_user.id
+        db.update_job(job)
+        anonymous = TestClient(app)
+
+        users_repo.set_active(db.conn, test_user.id, active=False)
+        deactivated = anonymous.get(f"/shared/{job.share_token}{path}")
+        users_repo.set_active(db.conn, test_user.id, active=True)
+        reactivated = anonymous.get(f"/shared/{job.share_token}{path}")
+
+        assert deactivated.status_code == 404
+        assert reactivated.status_code == 200
+
+    @pytest.mark.parametrize("path", ["", "/media"])
+    @pytest.mark.parametrize(
+        ("owner", "status"),
+        [("none", 200), ("missing", 404)],
+        ids=["job-without-owner-is-shared", "owner-row-gone-is-not"],
+    )
+    def test_share_link_follows_the_owner_column(self, app, db, filestore, path, owner, status):
+        """The app fixture gives every inserted job an owner, so set the column
+        afterwards: jobs from before accounts existed have NULL, and an owner id
+        whose user row is gone must not keep the link alive."""
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        owner_id = None if owner == "none" else 999_999
+        db.conn.execute("UPDATE jobs SET owner_id = ? WHERE id = ?", (owner_id, job.id))
+        db.conn.commit()
+
+        resp = TestClient(app).get(f"/shared/{job.share_token}{path}")
+
+        assert resp.status_code == status
+
+    @pytest.mark.parametrize("path", ["", "/media"])
+    def test_shared_responses_are_never_stored(self, app, db, filestore, path):
+        """Whether a link works depends on the owner's account at request
+        time, so neither the content nor a 404 may be kept by a cache."""
+        from fastapi.testclient import TestClient
+
+        job = _create_shared_job(db, filestore)
+        anonymous = TestClient(app)
+
+        found = anonymous.get(f"/shared/{job.share_token}{path}")
+        missing = anonymous.get(f"/shared/unknown-token{path}")
+
+        assert found.status_code == 200
+        assert found.headers["cache-control"] == "no-store"
+        assert missing.status_code == 404
+        assert missing.headers["cache-control"] == "no-store"
+
     def test_shared_media_missing_source_returns_404(self, app, db, filestore):
         from fastapi.testclient import TestClient
 

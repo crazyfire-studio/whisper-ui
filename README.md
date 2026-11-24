@@ -216,6 +216,12 @@ password) and `/admin/jobs` (every user's transcripts, including legacy
 rows from pre-auth deployments). All other capabilities — upload,
 transcript view, export — are identical for both roles.
 
+**Share links:** from the viewer, the owner of a completed transcript, or
+an admin, can create a link (`/shared/<token>`) that opens the transcript
+and plays its source media without signing in. A link has no expiry. It
+stops working when it is revoked in the viewer, and while the owner's
+account is deactivated; reactivating the account brings it back.
+
 **Operational notes:**
 
 - Admin resets a forgotten password directly (no SMTP required). Pass
