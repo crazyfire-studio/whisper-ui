@@ -864,17 +864,43 @@ class TestTwitterDownload:
         ydl_opts = mock_module.YoutubeDL.call_args.args[0]
         assert ydl_opts["allowed_extractors"] == ["twitter"]
 
-    def test_cookiefile_passed_when_file_exists(self, context, download_dir, tmp_path):
+    def test_yt_dlp_gets_a_writable_copy_of_a_read_only_cookiefile(self, context, download_dir, tmp_path):
+        # yt-dlp rewrites its cookiefile on close; the operator's file is
+        # mounted read-only and must be left alone.
         cookies = tmp_path / "cookies.txt"
         cookies.write_text("# Netscape HTTP Cookie File\n")
+        cookies.chmod(0o444)
+        seen = {}
+
+        def fake_ydl(opts):
+            given = Path(opts["cookiefile"])
+            seen["path"] = given
+            seen["text"] = given.read_text()
+            given.write_text("rewritten by yt-dlp\n")
+            return self._make_mock_ydl(download_dir)
+
         mock_module = MagicMock()
-        mock_module.YoutubeDL.return_value = self._make_mock_ydl(download_dir)
+        mock_module.YoutubeDL.side_effect = fake_ydl
 
         with patch.dict("sys.modules", {"yt_dlp": mock_module}):
             DownloadStage(twitter_cookies_file=str(cookies)).execute(context)
 
-        ydl_opts = mock_module.YoutubeDL.call_args.args[0]
-        assert ydl_opts["cookiefile"] == str(cookies)
+        assert seen["path"] != cookies
+        assert seen["text"] == "# Netscape HTTP Cookie File\n"
+        assert cookies.read_text() == "# Netscape HTTP Cookie File\n"
+        assert not seen["path"].exists()
+
+    def test_download_without_cookies_needs_no_temporary_directory(self, context, download_dir):
+        mock_module = MagicMock()
+        mock_module.YoutubeDL.return_value = self._make_mock_ydl(download_dir)
+
+        with (
+            patch.dict("sys.modules", {"yt_dlp": mock_module}),
+            patch("tempfile.TemporaryDirectory", side_effect=OSError("no usable temporary directory")),
+        ):
+            result = DownloadStage().execute(context)
+
+        assert result["input_path"]
 
     def test_cookiefile_omitted_when_unset(self, context, download_dir):
         mock_module = MagicMock()
