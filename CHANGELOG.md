@@ -7,6 +7,52 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-11-24
+
+Fixes from a whole-project review: jobs that could stay in processing or change
+status after the fact, a GPU worker that could not restart after being killed,
+X downloads with a read-only cookies file, and a race creating the first admin.
+Worker runtime dependencies are updated.
+
+### Deploy notes
+
+- No `.env` change. Recreate the frontend and every worker together, as usual.
+- Workers now register as `whisper-worker-<hostname>-<uuid>`. A worker killed
+  without a clean shutdown stays listed until its registration expires (#290).
+
+### Fixed
+
+- A job no longer stays in processing for good when a worker dies mid-stage and
+  `/metrics` is scraped before the workers' own maintenance runs. The stale-job
+  check now also recovers jobs already stuck this way (#282).
+- `whisper_started_jobs` no longer counts executions of a worker that died, so
+  `WhisperGpuQueueStalled` fires when the GPU worker is gone (#282).
+- A GPU worker killed mid-job restarts at once, instead of failing until its
+  previous registration expires: up to eight hours with the default
+  `JOB_TIMEOUT_MAX` (#281).
+- A late failure report no longer turns a completed job into a failed one, and
+  a callback that is ignored is no longer logged as a pipeline failure (#285).
+- Progress reported by one stage no longer overwrites a status or error another
+  stage has just written, and a late report no longer changes a finished job.
+  Creating or revoking a share link no longer resets the job's retention clock
+  or moves it into today's completion count (#286).
+- X downloads work with `TWITTER_COOKIES_FILE` mounted read-only, as
+  `.env.example` recommends: yt-dlp gets a private copy of the file (#283).
+- Two registrations on a fresh instance can no longer both become the first
+  admin (#284).
+
+### Changed
+
+- Worker dependencies: ctranslate2 4.9.0, transformers 5.23.0, numpy 2.5.5,
+  pyannote.audio 4.1.1, gdown 6.5.2 (#280).
+- FastAPI 0.162.5 (#278); Pydantic 2.14.3 and Pydantic Settings 2.16.3 (#279).
+
+### Security
+
+- dnspython 2.9.2 (CVE-2026-128089), opentelemetry-api 1.45.2
+  (CVE-2026-126360) and soupsieve 4.1.3 (CVE-2026-126190 to CVE-2026-126193)
+  (#288).
+
 ## [3.1.0] - 2026-11-09
 
 The job queue moves to RQ 3, the whisper.cpp VAD threshold becomes configurable,
@@ -1246,7 +1292,8 @@ Error` JSON body while logging the full traceback, so an
   classification, missing-job handling) are now covered by unit tests
   in `test_pipeline_dispatcher.py` and `test_stage_tasks.py`.
 
-[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/crazyfire-studio/whisper-ui/compare/v3.1.1...HEAD
+[3.1.1]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.1
 [3.1.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.1.0
 [3.0.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v3.0.0
 [2.22.0]: https://github.com/crazyfire-studio/whisper-ui/releases/tag/v2.22.0
