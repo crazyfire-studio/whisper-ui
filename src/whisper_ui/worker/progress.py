@@ -41,15 +41,16 @@ class ProgressWriteOutcome(enum.Enum):
     """Outcome of a generation-gated progress write, consumed by the throttled
     reporter's SQLite mirror.
 
-    * ``ACCEPTED`` — Redis accepted the write; gating confirmed this writer owns
-      the current attempt, so a full-column ``update_job`` mirror is safe.
+    * ``ACCEPTED`` — Redis accepted the write: this writer's generation is the
+      current attempt. The mirror writes the progress columns. Not the whole
+      row: a sibling stage of the same attempt may hold an older snapshot.
     * ``REJECTED`` — the Lua script dropped the write because the caller's
       generation is stale (a superseded retry). The mirror must be skipped
-      entirely so the stale snapshot cannot overwrite the current attempt.
+      entirely so the stale writer cannot touch the current attempt's progress.
     * ``DEGRADED`` — Redis was unavailable, so gating could not be checked. The
-      mirror falls back to a progress-only field-level UPDATE: it keeps SQLite
-      (the source of truth during an outage) fresh without risking a
-      full-column overwrite from a possibly-stale writer.
+      mirror still writes the progress columns, which keeps SQLite (the source
+      of truth during an outage) fresh; the database only applies them to a
+      job that is still active.
     """
 
     ACCEPTED = "accepted"
@@ -295,12 +296,10 @@ class RedisProgressReporter:
         * ``REJECTED`` — the script explicitly dropped a stale write
           (``caller_gen < stored_gen``): a stage writing under a superseded
           generation. ``make_throttled_progress_reporter`` skips its DB mirror
-          on this so a stale Job snapshot cannot overwrite the current
-          attempt's row via the full-column ``update_job`` UPDATE.
-        * ``DEGRADED`` — Redis was unavailable. Previously this was reported as
-          accepted, which let a stale writer's full-column mirror clobber a
-          COMPLETED row during an outage. It is now surfaced so the mirror
-          falls back to a progress-only field-level UPDATE instead.
+          on this so a superseded attempt cannot move the current attempt's
+          progress.
+        * ``DEGRADED`` — Redis was unavailable, so the generation could not be
+          checked. The mirror still runs; see :class:`ProgressWriteOutcome`.
         """
         try:
             result = self._max_write_script(

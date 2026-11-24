@@ -198,41 +198,17 @@ class _ThrottledProgressReporter:
         rejected as stale (so the caller leaves throttle state untouched)."""
         outcome = self._reporter.report(progress, message)
         # REJECTED means the Lua script found the caller's generation strictly
-        # older than the stored one (the parent job was retried under a newer
-        # attempt). We must NOT touch the Job object or its SQLite row then:
-        # db.update_job does a full-column UPDATE from the in-memory snapshot,
-        # so a stale Job would overwrite the current attempt's status /
-        # result_path / error.
+        # older than the stored one: the parent job was retried under a newer
+        # attempt, whose progress this stage must not touch.
         if outcome is ProgressWriteOutcome.REJECTED:
-            logger.debug(
-                "progress write for %s dropped server-side (stale generation); "
-                "skipping DB mirror to avoid overwriting the current attempt",
-                self._job.id,
-            )
+            logger.debug("progress write for %s dropped server-side (stale generation)", self._job.id)
             return False
-        # The Redis write above is monotonic (the reporter's Lua max-write only
-        # ever advances progress) and is the single source of truth for live
-        # progress: the UI reads job:{id} from Redis while a job is
-        # QUEUED/PROCESSING. This SQLite mirror is the durable copy and is NOT
-        # guaranteed monotonic — parallel branches (transcribe vs diarize) run
-        # in separate processes with independent Job snapshots and reporters,
-        # so their interleaved full-column UPDATEs can momentarily write a
-        # lower progress here. That is fine because no live path reads progress
-        # from the DB; if one is ever added, give this mirror a max(old, new)
-        # guard first.
-        #
-        # The mirror is best-effort like the Redis write: a SQLite lock or I/O
-        # error while recording progress must never fail a multi-hour stage, so
-        # any DB error is logged and swallowed. DEGRADED (Redis outage) cannot
-        # confirm generation, so it takes the progress-only field-level UPDATE
-        # to avoid a full-column overwrite from a possibly-stale writer.
-        self._job.progress = progress
-        self._job.progress_message = message
+        # Redis is the source of truth for live progress; this SQLite mirror is
+        # the durable copy and is not monotonic across parallel branches. It is
+        # best-effort: a SQLite lock or I/O error while recording progress must
+        # never fail a multi-hour stage.
         try:
-            if outcome is ProgressWriteOutcome.DEGRADED:
-                self._db.update_job_progress(self._job.id, progress, message)
-            else:
-                self._db.update_job(self._job)
+            self._db.update_job_progress(self._job.id, progress, message)
         except sqlite3.Error:
             logger.warning("SQLite progress mirror failed for %s; continuing", self._job.id, exc_info=True)
         return True
