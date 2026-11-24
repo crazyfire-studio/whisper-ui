@@ -472,10 +472,6 @@ class JobDatabase:
             ).fetchone()
         return bool(row[0])
 
-    def delete_job(self, job_id: str) -> None:
-        self._conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
-        self._conn.commit()
-
     def try_claim_retry(self, job_id: str, duration: float | None) -> bool:
         """Atomically transition a FAILED job to QUEUED for a retry.
 

@@ -633,7 +633,7 @@ def test_change_password_invalidates_existing_session(app, db, test_user):
     assert first.status_code == 200
 
     # Bump session_version (admin's "set new password" would do this).
-    users_repo.set_password(db.conn, test_user.id, "newpassword")
+    users_repo.store_password_hash(db.conn, test_user.id, users_repo.hash_password("newpassword"))
 
     # Second request: stale session, should redirect to /login.
     second = client.get("/", follow_redirects=False)
