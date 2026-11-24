@@ -56,6 +56,78 @@ def test_whisper_collector_reports_status_counts_and_queue_depth(tmp_path):
         db.close()
 
 
+def _start_execution(redis, queue_name: str, *, expires_in: float):
+    """Put a STARTED job in the queue's started registry, as a worker would."""
+    import time
+
+    from rq import Queue
+    from rq.job import JobStatus as RQJobStatus
+    from rq.registry import StartedJobRegistry
+
+    job = Queue(queue_name, connection=redis).enqueue("math.sqrt", 4)
+    job.set_status(RQJobStatus.STARTED)
+    redis.zadd(StartedJobRegistry(queue_name, connection=redis).key, {f"{job.id}:execution": time.time() + expires_in})
+    return job
+
+
+def test_scrape_does_not_run_the_cleanup_of_an_abandoned_job(tmp_path):
+    """The route renders on a worker thread, where RQ cannot run the failure
+    callback of an abandoned job. The scrape must leave RQ's state alone."""
+    from rq.job import JobStatus as RQJobStatus
+    from rq.registry import StartedJobRegistry
+
+    redis = fakeredis.FakeRedis()
+    db = JobDatabase(tmp_path / "m.db")
+    try:
+        abandoned = _start_execution(redis, "whisper:gpu", expires_in=-10)
+        registry_key = StartedJobRegistry("whisper:gpu", connection=redis).key
+
+        _scrape(db, redis)
+
+        assert abandoned.get_status(refresh=True) == RQJobStatus.STARTED
+        assert redis.zcard(registry_key) == 1
+    finally:
+        db.close()
+
+
+def test_started_jobs_counts_only_unexpired_executions(tmp_path):
+    """WhisperGpuQueueStalled fires on whisper_started_jobs == 0. The execution
+    of a worker that died must not hold the gauge above zero."""
+    redis = fakeredis.FakeRedis()
+    db = JobDatabase(tmp_path / "m.db")
+    try:
+        _start_execution(redis, "whisper:gpu", expires_in=-10)
+        _start_execution(redis, "whisper:io", expires_in=-10)
+        _start_execution(redis, "whisper:io", expires_in=60)
+
+        out = _scrape(db, redis)
+
+        assert 'whisper_started_jobs{queue="whisper:gpu"} 0.0' in out
+        assert 'whisper_started_jobs{queue="whisper:io"} 1.0' in out
+    finally:
+        db.close()
+
+
+def test_an_execution_expiring_this_second_is_not_in_flight(tmp_path, monkeypatch):
+    """RQ's cleanup removes entries scored at or below the current time, so an
+    entry whose expiry equals "now" is already expired."""
+    from rq.registry import StartedJobRegistry
+
+    now = 1_800_000_000
+    monkeypatch.setattr("rq.utils.current_timestamp", lambda: now)
+    redis = fakeredis.FakeRedis()
+    db = JobDatabase(tmp_path / "m.db")
+    try:
+        registry = StartedJobRegistry("whisper:gpu", connection=redis)
+        redis.zadd(registry.key, {"expiring:execution": now, "live:execution": now + 1})
+
+        out = _scrape(db, redis)
+
+        assert 'whisper_started_jobs{queue="whisper:gpu"} 1.0' in out
+    finally:
+        db.close()
+
+
 def test_whisper_collector_degrades_when_redis_fails(tmp_path):
     """A Redis failure must not break the scrape: SQLite job metrics still emit,
     queue gauges are skipped, and collect() never raises."""
